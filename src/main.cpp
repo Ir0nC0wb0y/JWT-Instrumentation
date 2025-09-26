@@ -3,12 +3,19 @@
 #include <ms4525do.h>
 
 // Libraries for menu system
-
-#include <LcdMenu.h>
-#include <MenuScreen.h>
-#include <display/LiquidCrystal_I2CAdapter.h>
-#include <input/KeyboardAdapter.h>
-#include <renderer/CharacterDisplayRenderer.h>
+//#define MENU_INPUT_KEYBOARD
+#define MENU_INPUT_ROTARY
+  #include <LcdMenu.h>
+  #include <MenuScreen.h>
+  #include <display/LiquidCrystal_I2CAdapter.h>
+  #include <renderer/CharacterDisplayRenderer.h>
+  #ifdef MENU_INPUT_KEYBOARD
+    #include <input/KeyboardAdapter.h>
+  #endif
+  #ifdef MENU_INPUT_ROTARY
+    #include <SimpleRotary.h>
+    #include <input/SimpleRotaryAdapter.h>
+  #endif
 
 #include "expFilter.h"
 
@@ -23,20 +30,34 @@
   #define SCALE2_PIN_SCK   13
   HX711 scale1;
   HX711 scale2;
+  void Weight_Scale1();
   expFilter scale1_filter;
   expFilter scale2_filter;
   unsigned long scale1_display_last = 0;
   unsigned long scale2_display_last = 0;
   #define SCALE_DISPLAY_TIME 1000
-  #define SCALE_FILTER_WEIGHT .99
+  #define SCALE_FILTER_WEIGHT .75
+  //Scale Calibration Vars
+    long  cal_scale1_tare  = 0;
+    float cal_scale1_scale = 1.0;
+    long  cal_scale2_tare  = 0;
+    float cal_scale2_scale = 1.0;
+  // Scale Functions
+    //void Scale1_Tare();
+    //void Scale1_Scale();
 
 // Pressure Sensor (Pitot)
   bfs::Ms4525do pres;
   bool pres_connected = false;
   expFilter pres_filter;
   unsigned long pres_display_last = 0;
-  #define PRES_DISPLAY_TIME 250
+  //#define PRES_DISPLAY_TIME 500
   #define PRES_FILTER_WEIGHT .9
+
+// Encoder
+  #define ENCODER_PIN_SW  21
+  #define ENCODER_PIN_CLK 20
+  #define ENCODER_PIN_DT  19
 
 // LCD Menu
   #define LCD_ROWS 4
@@ -45,7 +66,13 @@
   LiquidCrystal_I2C lcd(0x27, LCD_COLS, LCD_ROWS);
   CharacterDisplayRenderer renderer(new LiquidCrystal_I2CAdapter(&lcd), LCD_COLS, LCD_ROWS);
   LcdMenu menu(renderer);
-  KeyboardAdapter keyboard(&menu, &Serial);
+  #ifdef MENU_INPUT_KEYBOARD
+    KeyboardAdapter keyboard(&menu, &Serial);
+  #endif
+  #ifdef MENU_INPUT_ROTARY
+    SimpleRotary encoder(ENCODER_PIN_CLK, ENCODER_PIN_DT, ENCODER_PIN_SW);
+    SimpleRotaryAdapter rotaryInput(&menu, &encoder);
+  #endif
   uint16_t val_polling = 0;
 
 void setup() {
@@ -94,45 +121,73 @@ void setup() {
 }
 
 void loop() {
-  if (scale1.is_ready()) {
-    scale1_filter.filter((float)scale1.read());
-    scale1_val = scale1_filter.getValue();
-    //long reading1 = scale1.read();
-    if (millis() - scale1_display_last >= SCALE_DISPLAY_TIME) {
-      Serial.print("HX711 scale1 reading: ");
-      Serial.println(scale1_val);
-      scale1_display_last = millis();
-    }
-  }
+  #ifdef MENU_INPUT_KEYBOARD
+    keyboard.observe();
+  #endif
+  #ifdef MENU_INPUT_ROTARY
+    rotaryInput.observe();
+  #endif
+  
+  Weight_Scale1();
 
   if (scale2.is_ready()) {
     scale2_filter.filter((float)scale2.read());
     scale2_val = scale2_filter.getValue();
-    //long reading2 = scale2.read();
-    if (millis() - scale2_display_last >= SCALE_DISPLAY_TIME) {
-      Serial.print("HX711 scale2 reading: ");
-      Serial.println(scale2_val);
-      scale2_display_last = millis();
-    }
+    #ifdef SCALE_DISPLAY_TIME
+      if (millis() - scale2_display_last >= SCALE_DISPLAY_TIME) {
+        Serial.print("HX711 scale2 reading: ");
+        Serial.println(scale2_val);
+        scale2_display_last = millis();
+      }
+    #endif
   }
 
   if (pres_connected) {
     if (pres.Read()) {
       pres_filter.filter(pres.pres_pa());
       pres_val = pres_filter.getValue();
-      /* Display the pressure data */
-      //Serial.print(pres.pres_pa(), 1);
-      //Serial.print("\t");
-      //Serial.print(pres.die_temp_c(), 1);
-      //Serial.print("\n");
-      if (millis() - pres_display_last >= PRES_DISPLAY_TIME) {
-        Serial.print("Pressure reading: ");
-        Serial.println(pres_val);
-        pres_display_last = millis();
-      }
+      #ifdef PRES_DISPLAY_TIME
+        if (millis() - pres_display_last >= PRES_DISPLAY_TIME) {
+          Serial.print("Pressure reading: ");
+          Serial.println(pres_val);
+          pres_display_last = millis();
+        }
+      #endif
     }
   }
-  keyboard.observe();
   menu.poll(MENU_POLL_TIME);
   //delay(500);
 }
+
+void Weight_Scale1() {
+  if (scale1.is_ready()) {
+    long measurement = (float)scale1.read() - cal_scale1_tare;
+    float weight = cal_scale1_scale * (float)measurement;
+    scale1_filter.filter(weight);
+    scale1_val = scale1_filter.getValue();
+    #ifdef SCALE_DISPLAY_TIME
+      if (millis() - scale1_display_last >= SCALE_DISPLAY_TIME) {
+        Serial.print("HX711 scale1 reading: ");
+        Serial.println(scale1_val);
+        scale1_display_last = millis();
+      }
+    #endif
+  }
+}
+
+
+/*
+void Scale1_Tare() {
+  cal_scale1_tare = scale1.read_average(25);
+  Serial.print("---> Scale1 Tare: ");
+    Serial.println(cal_scale1_tare);
+}
+
+void Scale1_Scale() {
+  // Scale Factor = {Test Weight} / (Reading - Tare)
+  long scale_reading = scale1.read_average(25);
+  cal_scale1_scale = menu_cal_scale1_testWeight / (float)(scale_reading - cal_scale1_tare);
+  Serial.print("---> Scale1 Scale: ");
+    Serial.println(cal_scale1_scale);
+}
+*/

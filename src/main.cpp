@@ -4,7 +4,7 @@
 
 // Libraries for menu system
 #define MENU_INPUT_KEYBOARD
-//#define MENU_INPUT_ROTARY
+#define MENU_INPUT_ROTARY
   #include <LcdMenu.h>
   #include <MenuScreen.h>
   #include <display/LiquidCrystal_I2CAdapter.h>
@@ -20,7 +20,7 @@
 #include "expFilter.h"
 
 // SD Card
-  #define REQUIRE_SERIAL
+  //#define REQUIRE_SERIAL
   #include <SPI.h>
   #include <SD.h>
   #define SPI_PIN_MISO 16  // AKA SPI RX

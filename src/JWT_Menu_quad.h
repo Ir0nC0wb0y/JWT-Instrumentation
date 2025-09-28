@@ -29,6 +29,7 @@ extern MenuScreen* calibrateScale1QuadValueScreen;
     float  menu_cal_scale1_quad_weight_temp   = 0;
     int    menu_cal_scale1_quad_item          = 0;
     double menu_cal_scale1_quad_val           = 0;
+    int    menu_cal_scale1_quad_item_weight[4];
     double menu_cal_scale1_quad_weight[4] = {0.0, 257.0, 893.0, 2345.0};
     double menu_cal_scale1_quad_value[4];
     double menu_cal_scale1_quad_coeffs[4] = {0.0, 0.0, 1.0, 0.0};
@@ -133,13 +134,15 @@ void Menu_Scale1_Quad_Accept() {
 void Menu_Scale1_Quad_Reset() {
   cal_scale1_quad_tare = 0;
   cal_scale1_quad_coeffs[0] = 0;
-  cal_scale1_quad_coeffs[1] = 1;
-  cal_scale1_quad_coeffs[2] = 0;
+  cal_scale1_quad_coeffs[1] = 0;
+  cal_scale1_quad_coeffs[2] = 1;
+  cal_scale1_quad_coeffs[3] = 0;
 
   menu_cal_scale1_quad_tare = 0;
   menu_cal_scale1_quad_coeffs[0] = 0;
-  menu_cal_scale1_quad_coeffs[1] = 1;
-  menu_cal_scale1_quad_coeffs[2] = 0;
+  menu_cal_scale1_quad_coeffs[1] = 0;
+  menu_cal_scale1_quad_coeffs[2] = 1;
+  menu_cal_scale1_quad_coeffs[3] = 0;
 
   menu_cal_scale1_quad = false;
   menu.setScreen(settingsScreen);
@@ -154,6 +157,12 @@ void Menu_Scale1_Quad_Cancel() {
 
 void calibrateScale1QuadValueItem(int item) {
   menu_cal_scale1_quad_item = item;
+
+  // Collect digits of the default item weight
+  //cal_scale1_testWeight_digit1 = (int)floor(menu_cal_scale1_quad_weight[item] / 1000);
+  //cal_scale1_testWeight_digit2 = (int)floor(menu_cal_scale1_quad_weight[item] / 100) - (int)floor(menu_cal_scale1_quad_weight[item] / 1000)*10;
+  //cal_scale1_testWeight_digit3 = (int)floor(menu_cal_scale1_quad_weight[item] / 10) - (int)floor(menu_cal_scale1_quad_weight[item] / 100)*10;
+  //cal_scale1_testWeight_digit4 = (int)floor(menu_cal_scale1_quad_weight[item] / 1) - (int)floor(menu_cal_scale1_quad_weight[item] / 10)*10;
 }
 
 void Combine_Scale1_WeightArray(int place, int digit1, int digit2, int digit3, int digit4) {

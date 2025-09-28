@@ -3,8 +3,8 @@
 #include <ms4525do.h>
 
 // Libraries for menu system
-//#define MENU_INPUT_KEYBOARD
-#define MENU_INPUT_ROTARY
+#define MENU_INPUT_KEYBOARD
+//#define MENU_INPUT_ROTARY
   #include <LcdMenu.h>
   #include <MenuScreen.h>
   #include <display/LiquidCrystal_I2CAdapter.h>
@@ -19,6 +19,19 @@
 
 #include "expFilter.h"
 
+// SD Card
+  #define REQUIRE_SERIAL
+  #include <SPI.h>
+  #include <SD.h>
+  #define SPI_PIN_MISO 16  // AKA SPI RX
+  #define SPI_PIN_MOSI 19  // AKA SPI TX
+  #define SPI_PIN_CS   17
+  #define SPI_PIN_SCK  18
+  void SD_Testing();
+  void printDirectory(File dir, int numTabs);
+  File root;
+
+
 // I2C
   #define I2C_PIN_SCL 5
   #define I2C_PIN_SDA 4
@@ -31,12 +44,13 @@
   HX711 scale1;
   HX711 scale2;
   void Weight_Scale1();
+  void Weight_Scale2();
   expFilter scale1_filter;
   expFilter scale2_filter;
   unsigned long scale1_display_last = 0;
   unsigned long scale2_display_last = 0;
   #define SCALE_DISPLAY_TIME 1000
-  #define SCALE_FILTER_WEIGHT .75
+  #define SCALE_FILTER_WEIGHT .9
   //Scale Calibration Vars
     long  cal_scale1_tare  = 0;
     float cal_scale1_scale = 1.0;
@@ -57,7 +71,7 @@
 // Encoder
   #define ENCODER_PIN_SW  21
   #define ENCODER_PIN_CLK 20
-  #define ENCODER_PIN_DT  19
+  #define ENCODER_PIN_DT  22
 
 // LCD Menu
   #define LCD_ROWS 4
@@ -73,11 +87,38 @@
     SimpleRotary encoder(ENCODER_PIN_CLK, ENCODER_PIN_DT, ENCODER_PIN_SW);
     SimpleRotaryAdapter rotaryInput(&menu, &encoder);
   #endif
+  bool menu_cal_scale1 = false;
+  bool menu_cal_scale2 = false;
   uint16_t val_polling = 0;
 
 void setup() {
+
+  #ifdef REQUIRE_SERIAL
+    while (!Serial) {
+      delay(1);  // wait for serial port to connect. Needed for native USB port only
+    }
+  #endif
+
   Serial.begin(115200);
   Serial.println("Starting sketch");
+
+  // SD Card Init
+    bool sdInitialized = false;
+    SPI.setRX(SPI_PIN_MISO);
+    SPI.setTX(SPI_PIN_MOSI);
+    SPI.setSCK(SPI_PIN_SCK);
+    sdInitialized = SD.begin(SPI_PIN_CS);
+    if (!sdInitialized) {
+      Serial.println("SD initialization failed!");
+      return;
+    }
+    Serial.println("SD initialization done.");
+    root = SD.open("/");
+    printDirectory(root, 0);
+    Serial.println();
+    //SD_Testing();
+    Serial.println();
+    Serial.println();
 
   scale1.begin(SCALE1_PIN_DOUT, SCALE1_PIN_SCK);
   scale2.begin(SCALE2_PIN_DOUT, SCALE2_PIN_SCK);
@@ -87,11 +128,11 @@ void setup() {
   bool scale2_read = false;
   while (!scale1_read || !scale2_read) {
     if (scale1.is_ready()) {
-      scale1_filter.setValue((float)scale1.read());
+      scale1_filter.setValue((float)(scale1.read() >> 8));
       scale1_read = true;
     }
     if (scale2.is_ready()) {
-      scale2_filter.setValue((float)scale2.read());
+      scale2_filter.setValue((float)(scale2.read() >> 8));
       scale2_read = true;
     }
     delay(5);
@@ -129,18 +170,7 @@ void loop() {
   #endif
   
   Weight_Scale1();
-
-  if (scale2.is_ready()) {
-    scale2_filter.filter((float)scale2.read());
-    scale2_val = scale2_filter.getValue();
-    #ifdef SCALE_DISPLAY_TIME
-      if (millis() - scale2_display_last >= SCALE_DISPLAY_TIME) {
-        Serial.print("HX711 scale2 reading: ");
-        Serial.println(scale2_val);
-        scale2_display_last = millis();
-      }
-    #endif
-  }
+  Weight_Scale2();
 
   if (pres_connected) {
     if (pres.Read()) {
@@ -157,16 +187,66 @@ void loop() {
   }
   menu.poll(MENU_POLL_TIME);
   //delay(500);
+
 }
 
 void Weight_Scale1() {
   if (scale1.is_ready()) {
-    long measurement = (float)scale1.read() - cal_scale1_tare;
-    float weight = cal_scale1_scale * (float)measurement;
+    long measure_raw = scale1.read() >> 8;
+    long measure_tared = measure_raw - cal_scale1_tare;
+    float weight = cal_scale1_scale * (float)measure_tared;
     scale1_filter.filter(weight);
     scale1_val = scale1_filter.getValue();
+
+    // Calculate quadratic regression
+    long measure_quad_raw = measure_raw - cal_scale1_quad_tare;
+    measure_quad = (float)cal_scale1_quad_coeffs[0] * (float)measure_quad_raw * (float)measure_quad_raw * (float)measure_quad_raw +
+                   (float)cal_scale1_quad_coeffs[1] * (float)measure_quad_raw * (float)measure_quad_raw +
+                   (float)cal_scale1_quad_coeffs[2] * (float)measure_quad_raw +
+                   (float)cal_scale1_quad_coeffs[3];
+
+    if (menu_cal_scale1 && menu_cal_scale1_testWeight_set) {
+      float menu_measure = (float)(measure_raw - menu_cal_scale1_tare) * menu_cal_scale1_scaleFactor;
+      if (menu_cal_scale1_measure_first) {
+        menu_cal_scale1_measure.setValue(menu_measure);
+        menu_cal_scale1_measure_first = false;
+        Serial.print(",");
+      } else {
+        menu_cal_scale1_measure.filter(menu_measure);
+        Serial.print(".");
+      }
+      menu_cal_scale1_measure_val = menu_cal_scale1_measure.getValue();
+      if (millis() - scale1_display_last >= SCALE_DISPLAY_TIME){
+        Serial.print("---> Scale1 Measure: ");
+          Serial.println(menu_cal_scale1_measure_val);
+        scale1_display_last = millis();
+      }
+    }
+
+    if (menu_cal_scale1_quad) {
+      long menu_quad_measure_raw = measure_raw - menu_cal_scale1_quad_tare;
+      float menu_quad_measure = (float)menu_cal_scale1_quad_coeffs[0] * (float)menu_quad_measure_raw * (float)menu_quad_measure_raw * (float)menu_quad_measure_raw +
+                                (float)menu_cal_scale1_quad_coeffs[1] * (float)menu_quad_measure_raw * (float)menu_quad_measure_raw +
+                                (float)menu_cal_scale1_quad_coeffs[2] * (float)menu_quad_measure_raw +
+                                (float)menu_cal_scale1_quad_coeffs[3];
+      if (menu_cal_scale1_quad_measure_first) {
+        menu_cal_scale1_quad_measure.setValue(menu_quad_measure);
+        menu_cal_scale1_quad_measure_first = false;
+        Serial.print(",");
+      } else {
+        menu_cal_scale1_quad_measure.filter(menu_quad_measure);
+        Serial.print(".");
+      }
+      menu_cal_scale1_quad_val = menu_cal_scale1_quad_measure.getValue();
+      if (millis() - scale1_display_last >= SCALE_DISPLAY_TIME){
+        Serial.print("---> Quad1 Measure: ");
+          Serial.println(menu_cal_scale1_quad_val);
+        scale1_display_last = millis();
+      }
+    }
+
     #ifdef SCALE_DISPLAY_TIME
-      if (millis() - scale1_display_last >= SCALE_DISPLAY_TIME) {
+      if (millis() - scale1_display_last >= SCALE_DISPLAY_TIME && !menu_cal_scale1 && !menu_cal_scale2) {
         Serial.print("HX711 scale1 reading: ");
         Serial.println(scale1_val);
         scale1_display_last = millis();
@@ -175,6 +255,39 @@ void Weight_Scale1() {
   }
 }
 
+void Weight_Scale2() {
+  if (scale2.is_ready()) {
+    long measure_raw = scale2.read() >> 8;
+    long measure_tared = measure_raw - cal_scale2_tare;
+    float weight = cal_scale2_scale * (float)measure_tared;
+    scale2_filter.filter(weight);
+    scale2_val = scale2_filter.getValue();
+    if (menu_cal_scale2 && menu_cal_scale2_testWeight_set) {
+      float menu_measure = (float)(measure_raw - menu_cal_scale2_tare) * menu_cal_scale2_scaleFactor;
+      if (menu_cal_scale2_measure_first) {
+        menu_cal_scale2_measure.setValue(menu_measure);
+        menu_cal_scale2_measure_first = false;
+        Serial.print(",");
+      } else {
+        menu_cal_scale2_measure.filter(menu_measure);
+        Serial.print(".");
+      }
+      menu_cal_scale2_measure_val = menu_cal_scale2_measure.getValue();
+      if (millis() - scale2_display_last >= SCALE_DISPLAY_TIME){
+        Serial.print("---> Scale2 Measure: ");
+          Serial.println(menu_cal_scale2_measure_val);
+        scale2_display_last = millis();
+      }
+    }
+    #ifdef SCALE_DISPLAY_TIME
+      if (millis() - scale2_display_last >= SCALE_DISPLAY_TIME && !menu_cal_scale1 && !menu_cal_scale2 && !menu_cal_scale1_quad) {
+        Serial.print("HX711 scale2 reading: ");
+        Serial.println(scale2_val);
+        scale2_display_last = millis();
+      }
+    #endif
+  }
+}
 
 /*
 void Scale1_Tare() {
@@ -191,3 +304,67 @@ void Scale1_Scale() {
     Serial.println(cal_scale1_scale);
 }
 */
+
+void SD_Testing() {
+  // open the file. note that only one file can be open at a time,
+  // so you have to close this one before opening another.
+  File myFile = SD.open("test.txt", FILE_WRITE);
+
+  // if the file opened okay, write to it:
+  if (myFile) {
+    Serial.print("Writing to test.txt...");
+    myFile.println("testing 1, 2, 3.");
+    // close the file:
+    myFile.close();
+    Serial.println("done.");
+  } else {
+    // if the file didn't open, print an error:
+    Serial.println("error opening test.txt");
+  }
+
+  // re-open the file for reading:
+  myFile = SD.open("test.txt");
+  if (myFile) {
+    Serial.println("test.txt:");
+
+    // read from the file until there's nothing else in it:
+    while (myFile.available()) {
+      Serial.write(myFile.read());
+    }
+    // close the file:
+    myFile.close();
+  } else {
+    // if the file didn't open, print an error:
+    Serial.println("error opening test.txt");
+  }
+}
+
+void printDirectory(File dir, int numTabs) {
+  while (true) {
+
+    File entry = dir.openNextFile();
+    if (!entry) {
+      // no more files
+      break;
+    }
+    for (uint8_t i = 0; i < numTabs; i++) {
+      Serial.print('\t');
+    }
+    Serial.print(entry.name());
+    if (entry.isDirectory()) {
+      Serial.println("/");
+      printDirectory(entry, numTabs + 1);
+    } else {
+      // files have sizes, directories do not
+      Serial.print("\t\t");
+      Serial.print(entry.size(), DEC);
+      time_t cr = entry.getCreationTime();
+      time_t lw = entry.getLastWrite();
+      struct tm* tmstruct = localtime(&cr);
+      Serial.printf("\tCREATION: %d-%02d-%02d %02d:%02d:%02d", (tmstruct->tm_year) + 1900, (tmstruct->tm_mon) + 1, tmstruct->tm_mday, tmstruct->tm_hour, tmstruct->tm_min, tmstruct->tm_sec);
+      tmstruct = localtime(&lw);
+      Serial.printf("\tLAST WRITE: %d-%02d-%02d %02d:%02d:%02d\n", (tmstruct->tm_year) + 1900, (tmstruct->tm_mon) + 1, tmstruct->tm_mday, tmstruct->tm_hour, tmstruct->tm_min, tmstruct->tm_sec);
+    }
+    entry.close();
+  }
+}

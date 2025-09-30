@@ -20,7 +20,7 @@
 #include "expFilter.h"
 
 // SD Card
-  //#define REQUIRE_SERIAL
+  #define REQUIRE_SERIAL
   #include <SPI.h>
   #include <SD.h>
   #define SPI_PIN_MISO 16  // AKA SPI RX
@@ -30,6 +30,14 @@
   void SD_Testing();
   void printDirectory(File dir, int numTabs);
   File root;
+  // Data Logging
+    //extern char* Filename_buffer;
+    bool FileLogging = false;
+    void HandleSDWrite();
+    File logFile;
+    #define FILE_WRITE_PERIOD 250
+    unsigned long file_write_last = 0;
+    char* Filename_buffer = new char[25];
 
 
 // I2C
@@ -119,6 +127,10 @@ void setup() {
     //SD_Testing();
     Serial.println();
     Serial.println();
+    for (int i = 0; i < sizeof(Filename_buffer); i++) {
+      Filename_buffer[i] = '\0';
+    }
+
 
   scale1.begin(SCALE1_PIN_DOUT, SCALE1_PIN_SCK);
   scale2.begin(SCALE2_PIN_DOUT, SCALE2_PIN_SCK);
@@ -187,6 +199,8 @@ void loop() {
   }
   menu.poll(MENU_POLL_TIME);
   //delay(500);
+
+  HandleSDWrite();
 
 }
 
@@ -304,6 +318,104 @@ void Scale1_Scale() {
     Serial.println(cal_scale1_scale);
 }
 */
+
+char* ResetCharBuffer(char* buffer) {
+  for (int i = 0; i < sizeof(buffer); i++) {
+    buffer[i] = '\0';
+  }
+  return buffer;
+}
+
+void HandleSDWrite() {
+  if (start_file_logging) {
+    // clear start file flag
+    start_file_logging = false;
+    // open file
+    Serial.println("Filename Buffer: ");
+      Serial.println(Filename_buffer);
+    
+    //char* Filename_extension = new char[30];
+    //Serial.print("Filename extension: ");
+    //  Serial.println(Filename_extension);
+    
+    //strcpy(Filename_extension, Filename_buffer);
+    //Serial.print("Filename extension: ");
+    //  Serial.println(Filename_extension);
+    
+    bool valid_file = false;
+    int filename_version = 0;
+    //strcat(Filename_extension, ".txt");
+    char* Filename_iteration = new char[40];
+    //strcpy(Filename_iteration, Filename_extension);
+    while (!valid_file) {
+      // clear filename
+      for (int i = 0; i < sizeof(Filename_iteration); i++) {
+        Filename_iteration[i] = '\0';
+      }
+
+      strcpy(Filename_iteration, Filename_buffer);
+      strcat(Filename_iteration, ".txt");
+      // create filename with extension
+      if (filename_version != 0) {
+        strcat(Filename_iteration, ".");
+        // convert filename_version to char*
+        char str_buffer[3];
+        sprintf(str_buffer, "%d", filename_version);
+        strcat(Filename_iteration, str_buffer);
+        
+      }
+      // check if filename exists
+      Serial.print("Searching filename: ");
+        Serial.println(Filename_iteration);
+      if (SD.exists(Filename_iteration)) {
+        filename_version++;
+      } else {
+        logFile = SD.open(Filename_iteration, FILE_WRITE);
+        // Set FileLogging flag
+        FileLogging = true;
+        Serial.print("Opened file ");
+          Serial.println(Filename_iteration);
+        valid_file = true;
+        break; //break out of loop
+      }
+
+      // if no valid file after 16 attempts, fail logger
+      if (filename_version > 15) {
+        FileLogging = false;
+        Serial.print("Logger failed to open file ");
+          Serial.println(Filename_iteration);
+        break;
+      }
+    }
+
+    // print header
+    logFile.println("Time [ms], LoadCell1, LoadCell2, WindSpeed");
+    
+    file_write_last = millis();
+  }
+
+  if (stop_file_logging) {
+    // clear stop file flag
+    stop_file_logging = false;
+    // close file
+    logFile.close();
+    Serial.println("Stopped logging, Closed file");
+  }
+
+  if (FileLogging) {
+    if (millis() - file_write_last >= FILE_WRITE_PERIOD) {
+      // Write Line
+      logFile.print(millis());
+        logFile.print(", ");
+        logFile.print(scale1_val);
+        logFile.print(", ");
+        logFile.print(scale2_val);
+        logFile.print(", ");
+        logFile.println(pres_val);
+      file_write_last = millis();
+    }
+  }
+}
 
 void SD_Testing() {
   // open the file. note that only one file can be open at a time,

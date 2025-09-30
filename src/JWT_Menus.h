@@ -20,6 +20,8 @@ float pres_val = 0;
   extern LiquidCrystal_I2C lcd;
   void toggleBacklight(bool isOn);
 
+#include <JWT_Menu_FileLogger.h>
+
 // Calibrate Scale 1
   // From Main:
     extern bool menu_cal_scale1;
@@ -43,7 +45,6 @@ float pres_val = 0;
     bool menu_cal_scale1_measure_first = false;
   // Quadratic LSS Regression
     #include "JWT_Menu_Quad.h"
-
 
 // Calibrate Scale 2
   // From Main:
@@ -80,7 +81,8 @@ MENU_SCREEN(mainScreen, mainItems,
   ITEM_VALUE("Scale2", scale2_val, "%.0f"),
   ITEM_VALUE("dPres ",  pres_val, "%.1f"),
   ITEM_SUBMENU("Settings", settingsScreen),
-  ITEM_SUBMENU("Data Logger", dataLoggerScreen));
+  ITEM_SUBMENU("Data Logger", dataLoggerScreen)
+);
 
 MENU_SCREEN(settingsScreen, settingsItems,
   ITEM_BACK(),
@@ -89,14 +91,9 @@ MENU_SCREEN(settingsScreen, settingsItems,
   ITEM_SUBMENU("Calibrate Scale1", calibrateScale1Screen),
   ITEM_SUBMENU("Calibrate Scale2", calibrateScale2Screen),
   ITEM_SUBMENU("Calibrate Pitot", calibratePitotScreen)
-  );
+);
 
-MENU_SCREEN(dataLoggerScreen, dataLoggerItems,
-  ITEM_BACK(),
-  ITEM_BASIC("Filename"),
-  ITEM_BASIC("Start"),
-  ITEM_BASIC("Stop")
-  );
+
 
 MENU_SCREEN(calibrateScale1Screen, calibrateScale1Items,
   ITEM_COMMAND("Tare", Menu_Scale1_Tare),

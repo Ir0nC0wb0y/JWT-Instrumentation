@@ -58,11 +58,12 @@ MENU_SCREEN(dataLoggeFilenameScreen, dataLoggeFilenameItems,
 );
 
 void dataLoggerStart() {
+  if (strlen(Filename_buffer) == 0) {
+    Serial.println("Filename not set, not starting log");
+    return;
+  }
   start_file_logging = true;
   // Clear Filename buffer
-  for(int i = 0; i < sizeof(Filename_buffer); i++) {
-    Filename_buffer[i] = '\0';
-  }
   menu.setScreen(mainScreen);
 }
 
@@ -92,6 +93,12 @@ void dataLoggerFilenameConcat(const uint8_t char1, // could be as many as 5 char
                               const uint8_t char11,
                               const uint8_t char12,
                               const uint8_t char13) {
+
+  // Clear existing
+  for(int i = 0; i < sizeof(Filename_buffer); i++) {
+    Filename_buffer[i] = '\0';
+  }
+
   // Concat all values where character =/= 0
   if (char1 != 0) {
     strcat(Filename_buffer, fanspeed[char1]);

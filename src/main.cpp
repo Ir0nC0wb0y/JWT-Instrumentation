@@ -412,7 +412,7 @@ void HandleSDWrite() {
         logFile.print(scale2_val);
         logFile.print(", ");
         logFile.println(pres_val);
-      file_write_last = millis();
+      file_write_last = file_write_last + FILE_WRITE_PERIOD;
     }
   }
 }

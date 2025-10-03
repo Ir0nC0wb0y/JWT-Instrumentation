@@ -1,6 +1,10 @@
 #include <Arduino.h>
-#include <HX711.h>
+//#include <HX711.h>
 #include <ms4525do.h>
+#include <Adafruit_NAU7802.h>
+#include <TCA9548.h>
+#include <Wire.h>
+#include <ArduinoJson.h>
 
 // Libraries for menu system
 #define MENU_INPUT_KEYBOARD
@@ -18,9 +22,10 @@
   #endif
 
 #include "expFilter.h"
+//#include "JWT_Sensor_NAU7802.h"
 
 // SD Card
-  #define REQUIRE_SERIAL
+  //#define REQUIRE_SERIAL
   #include <SPI.h>
   #include <SD.h>
   #define SPI_PIN_MISO 16  // AKA SPI RX
@@ -40,33 +45,51 @@
     char* Filename_buffer = new char[25];
 
 
-// I2C
-  #define I2C_PIN_SCL 5
-  #define I2C_PIN_SDA 4
 
-// HX711
-  #define SCALE1_PIN_DOUT  10
-  #define SCALE1_PIN_SCK   11
-  #define SCALE2_PIN_DOUT  12
-  #define SCALE2_PIN_SCK   13
-  HX711 scale1;
-  HX711 scale2;
-  void Weight_Scale1();
-  void Weight_Scale2();
-  expFilter scale1_filter;
-  expFilter scale2_filter;
-  unsigned long scale1_display_last = 0;
-  unsigned long scale2_display_last = 0;
-  #define SCALE_DISPLAY_TIME 1000
-  #define SCALE_FILTER_WEIGHT .9
+// I2C
+  #define I2C0_PIN_SCL 5 // Bus 0
+  #define I2C0_PIN_SDA 4 // Bus 0
+  #define I2C1_PIN_SCL 3 // Bus 1
+  #define I2C1_PIN_SDA 2 // Bus 1
+
+// PCA9548
+  TCA9548 MP(0x70, &Wire1);
+  uint8_t channels = 0;
+  void setupPCA9548();
+  void MultiplexI2CScan();
+
+// NAU7802
+  expFilter NAU7802_filter1;
+  expFilter NAU7802_filter2;
+  Adafruit_NAU7802 nau1;
+  Adafruit_NAU7802 nau2;
+  void setupSensor_NAU7802_loadcell1();
+  void printSensor_NAU7802_loadcell1(bool force = false);
+  void setupSensor_NAU7802_loadcell2();
+  void printSensor_NAU7802_loadcell2(bool force = false);
+  unsigned long nau_print1_last = 0;
+  unsigned long nau_print2_last = 0;
+  #define NAU7802_PRINT_TIME 1000
+  #define LOADCELL1_CHANNEL 1
+  #define LOADCELL2_CHANNEL 3
+  #define LOADCELL_FILTER_WEIGHT .375
+
   //Scale Calibration Vars
-    long  cal_scale1_tare  = 0;
-    float cal_scale1_scale = 1.0;
-    long  cal_scale2_tare  = 0;
-    float cal_scale2_scale = 1.0;
-  // Scale Functions
-    //void Scale1_Tare();
-    //void Scale1_Scale();
+    //int32_t  cal_scale1_tare  = 0;
+    //float cal_scale1_scale = 1.0;
+    //int32_t  cal_scale2_tare  = 0;
+    //float cal_scale2_scale = 1.0;
+  // Load Cell Config
+    struct loadcell_config {
+      int32_t tare;
+      float   scale;
+    };
+    loadcell_config config_lc1;
+    loadcell_config config_lc2;
+    void loadcell_config_readFromFile(const char* filename, loadcell_config &config);
+    void loadcell_config_save2File(const char* filename, loadcell_config &config);
+    #define FILENAME_CONFIG_LC1 "/config/lc1.cfg"
+    #define FILENAME_CONFIG_LC2 "/config/lc2.cfg"
 
 // Pressure Sensor (Pitot)
   bfs::Ms4525do pres;
@@ -130,30 +153,31 @@ void setup() {
     for (int i = 0; i < sizeof(Filename_buffer); i++) {
       Filename_buffer[i] = '\0';
     }
-
-
-  scale1.begin(SCALE1_PIN_DOUT, SCALE1_PIN_SCK);
-  scale2.begin(SCALE2_PIN_DOUT, SCALE2_PIN_SCK);
-  scale1_filter.setWeight(SCALE_FILTER_WEIGHT);
-  scale2_filter.setWeight(SCALE_FILTER_WEIGHT);
-  bool scale1_read = false;
-  bool scale2_read = false;
-  while (!scale1_read || !scale2_read) {
-    if (scale1.is_ready()) {
-      scale1_filter.setValue((float)(scale1.read() >> 8));
-      scale1_read = true;
-    }
-    if (scale2.is_ready()) {
-      scale2_filter.setValue((float)(scale2.read() >> 8));
-      scale2_read = true;
-    }
-    delay(5);
-  }
-
-  Wire.setSDA(I2C_PIN_SDA);
-  Wire.setSCL(I2C_PIN_SCL);
+  
+  Wire.setSDA(I2C0_PIN_SDA);
+  Wire.setSCL(I2C0_PIN_SCL);
   Wire.setClock(400000);
   Wire.begin();
+
+  // PCA9548
+    Wire1.setSDA(I2C1_PIN_SDA);
+    Wire1.setSCL(I2C1_PIN_SCL);
+    Wire1.setClock(400000);
+    Wire1.begin();
+    setupPCA9548();
+    //MultiplexI2CScan();
+
+  // NAU7802
+    setupSensor_NAU7802_loadcell1();
+    setupSensor_NAU7802_loadcell2();
+    NAU7802_filter1.setWeight(LOADCELL_FILTER_WEIGHT);
+    NAU7802_filter2.setWeight(LOADCELL_FILTER_WEIGHT);
+    printSensor_NAU7802_loadcell1(true);
+    printSensor_NAU7802_loadcell2(true);
+    loadcell_config_readFromFile(FILENAME_CONFIG_LC1, config_lc1);
+    loadcell_config_readFromFile(FILENAME_CONFIG_LC2, config_lc2);
+
+
   // I2C address of 0x28, on bus 0, with a -1 to +1 PSI range
   pres.Config(&Wire, 0x28, 1.0f, -1.0f);
   // Starting communication with the pressure transducer
@@ -166,6 +190,7 @@ void setup() {
   } else {
     pres_connected = true;
     pres_filter.setWeight(PRES_FILTER_WEIGHT);
+    Serial.println("Pitot Sensor success!");
   }
 
   renderer.begin();
@@ -180,9 +205,9 @@ void loop() {
   #ifdef MENU_INPUT_ROTARY
     rotaryInput.observe();
   #endif
-  
-  Weight_Scale1();
-  Weight_Scale2();
+
+  printSensor_NAU7802_loadcell1();
+  printSensor_NAU7802_loadcell2();
 
   if (pres_connected) {
     if (pres.Read()) {
@@ -204,127 +229,14 @@ void loop() {
 
 }
 
-void Weight_Scale1() {
-  if (scale1.is_ready()) {
-    long measure_raw = scale1.read() >> 8;
-    long measure_tared = measure_raw - cal_scale1_tare;
-    float weight = cal_scale1_scale * (float)measure_tared;
-    scale1_filter.filter(weight);
-    scale1_val = scale1_filter.getValue();
-
-    // Calculate quadratic regression
-    long measure_quad_raw = measure_raw - cal_scale1_quad_tare;
-    measure_quad = (float)cal_scale1_quad_coeffs[0] * (float)measure_quad_raw * (float)measure_quad_raw * (float)measure_quad_raw +
-                   (float)cal_scale1_quad_coeffs[1] * (float)measure_quad_raw * (float)measure_quad_raw +
-                   (float)cal_scale1_quad_coeffs[2] * (float)measure_quad_raw +
-                   (float)cal_scale1_quad_coeffs[3];
-
-    if (menu_cal_scale1 && menu_cal_scale1_testWeight_set) {
-      float menu_measure = (float)(measure_raw - menu_cal_scale1_tare) * menu_cal_scale1_scaleFactor;
-      if (menu_cal_scale1_measure_first) {
-        menu_cal_scale1_measure.setValue(menu_measure);
-        menu_cal_scale1_measure_first = false;
-        Serial.print(",");
-      } else {
-        menu_cal_scale1_measure.filter(menu_measure);
-        Serial.print(".");
-      }
-      menu_cal_scale1_measure_val = menu_cal_scale1_measure.getValue();
-      if (millis() - scale1_display_last >= SCALE_DISPLAY_TIME){
-        Serial.print("---> Scale1 Measure: ");
-          Serial.println(menu_cal_scale1_measure_val);
-        scale1_display_last = millis();
-      }
-    }
-
-    if (menu_cal_scale1_quad) {
-      long menu_quad_measure_raw = measure_raw - menu_cal_scale1_quad_tare;
-      float menu_quad_measure = (float)menu_cal_scale1_quad_coeffs[0] * (float)menu_quad_measure_raw * (float)menu_quad_measure_raw * (float)menu_quad_measure_raw +
-                                (float)menu_cal_scale1_quad_coeffs[1] * (float)menu_quad_measure_raw * (float)menu_quad_measure_raw +
-                                (float)menu_cal_scale1_quad_coeffs[2] * (float)menu_quad_measure_raw +
-                                (float)menu_cal_scale1_quad_coeffs[3];
-      if (menu_cal_scale1_quad_measure_first) {
-        menu_cal_scale1_quad_measure.setValue(menu_quad_measure);
-        menu_cal_scale1_quad_measure_first = false;
-        Serial.print(",");
-      } else {
-        menu_cal_scale1_quad_measure.filter(menu_quad_measure);
-        Serial.print(".");
-      }
-      menu_cal_scale1_quad_val = menu_cal_scale1_quad_measure.getValue();
-      if (millis() - scale1_display_last >= SCALE_DISPLAY_TIME){
-        Serial.print("---> Quad1 Measure: ");
-          Serial.println(menu_cal_scale1_quad_val);
-        scale1_display_last = millis();
-      }
-    }
-
-    #ifdef SCALE_DISPLAY_TIME
-      if (millis() - scale1_display_last >= SCALE_DISPLAY_TIME && !menu_cal_scale1 && !menu_cal_scale2) {
-        Serial.print("HX711 scale1 reading: ");
-        Serial.println(scale1_val);
-        scale1_display_last = millis();
-      }
-    #endif
-  }
-}
-
-void Weight_Scale2() {
-  if (scale2.is_ready()) {
-    long measure_raw = scale2.read() >> 8;
-    long measure_tared = measure_raw - cal_scale2_tare;
-    float weight = cal_scale2_scale * (float)measure_tared;
-    scale2_filter.filter(weight);
-    scale2_val = scale2_filter.getValue();
-    if (menu_cal_scale2 && menu_cal_scale2_testWeight_set) {
-      float menu_measure = (float)(measure_raw - menu_cal_scale2_tare) * menu_cal_scale2_scaleFactor;
-      if (menu_cal_scale2_measure_first) {
-        menu_cal_scale2_measure.setValue(menu_measure);
-        menu_cal_scale2_measure_first = false;
-        Serial.print(",");
-      } else {
-        menu_cal_scale2_measure.filter(menu_measure);
-        Serial.print(".");
-      }
-      menu_cal_scale2_measure_val = menu_cal_scale2_measure.getValue();
-      if (millis() - scale2_display_last >= SCALE_DISPLAY_TIME){
-        Serial.print("---> Scale2 Measure: ");
-          Serial.println(menu_cal_scale2_measure_val);
-        scale2_display_last = millis();
-      }
-    }
-    #ifdef SCALE_DISPLAY_TIME
-      if (millis() - scale2_display_last >= SCALE_DISPLAY_TIME && !menu_cal_scale1 && !menu_cal_scale2 && !menu_cal_scale1_quad) {
-        Serial.print("HX711 scale2 reading: ");
-        Serial.println(scale2_val);
-        scale2_display_last = millis();
-      }
-    #endif
-  }
-}
-
 /*
-void Scale1_Tare() {
-  cal_scale1_tare = scale1.read_average(25);
-  Serial.print("---> Scale1 Tare: ");
-    Serial.println(cal_scale1_tare);
-}
-
-void Scale1_Scale() {
-  // Scale Factor = {Test Weight} / (Reading - Tare)
-  long scale_reading = scale1.read_average(25);
-  cal_scale1_scale = menu_cal_scale1_testWeight / (float)(scale_reading - cal_scale1_tare);
-  Serial.print("---> Scale1 Scale: ");
-    Serial.println(cal_scale1_scale);
-}
-*/
-
 char* ResetCharBuffer(char* buffer) {
   for (int i = 0; i < sizeof(buffer); i++) {
     buffer[i] = '\0';
   }
   return buffer;
 }
+*/
 
 void HandleSDWrite() {
   if (start_file_logging) {
@@ -417,40 +329,6 @@ void HandleSDWrite() {
   }
 }
 
-void SD_Testing() {
-  // open the file. note that only one file can be open at a time,
-  // so you have to close this one before opening another.
-  File myFile = SD.open("test.txt", FILE_WRITE);
-
-  // if the file opened okay, write to it:
-  if (myFile) {
-    Serial.print("Writing to test.txt...");
-    myFile.println("testing 1, 2, 3.");
-    // close the file:
-    myFile.close();
-    Serial.println("done.");
-  } else {
-    // if the file didn't open, print an error:
-    Serial.println("error opening test.txt");
-  }
-
-  // re-open the file for reading:
-  myFile = SD.open("test.txt");
-  if (myFile) {
-    Serial.println("test.txt:");
-
-    // read from the file until there's nothing else in it:
-    while (myFile.available()) {
-      Serial.write(myFile.read());
-    }
-    // close the file:
-    myFile.close();
-  } else {
-    // if the file didn't open, print an error:
-    Serial.println("error opening test.txt");
-  }
-}
-
 void printDirectory(File dir, int numTabs) {
   while (true) {
 
@@ -479,4 +357,381 @@ void printDirectory(File dir, int numTabs) {
     }
     entry.close();
   }
+}
+
+void loadcell_config_readFromFile(const char* filename, loadcell_config &config) {
+  Serial.print("Attempting to read config from: ");
+    Serial.println(filename);
+  // make sure the config directory exists
+  if (!SD.exists("/config")) {
+    if (SD.mkdir("/config")) {
+      Serial.println("Directory /config created.");
+    } else {
+      Serial.println("Failed to create directory /config");
+    }
+    Serial.println("Directory does not exist, exiting");
+    return;
+  }
+
+  // Open file for reading
+  File file = SD.open(filename);
+
+  // Allocate a temporary JsonDocument
+  JsonDocument doc;
+
+  // Deserialize the JSON document
+  DeserializationError error = deserializeJson(doc, file);
+  if (error) {
+    Serial.println(F("Failed to read file, using default configuration"));
+    config.tare = 0;
+    config.scale = 1.0;
+  } else {
+    // Copy values from the JsonDocument to the Config
+    config.tare = doc["tare"];
+    config.scale = doc["scale"];
+  }
+
+  Serial.print("Config Tare Value:  ");
+    Serial.println(config.tare);
+  Serial.print("Config Scale Value: ");
+    Serial.println(config.scale);
+
+  // Close the file (Curiously, File's destructor doesn't close the file)
+  file.close();
+}
+
+void loadcell_config_save2File(const char* filename, loadcell_config &config) {
+  Serial.print("Attempting to save config at: ");
+    Serial.println(filename);
+
+  // Delete existing file, otherwise the configuration is appended to the file
+  if (SD.exists(filename)) {
+    SD.remove(filename);
+    Serial.println("Old config file exists, deleted");
+  }
+
+  // Open file for writing
+  if (!SD.exists("/config")) {
+    if (SD.mkdir("/config")) {
+      Serial.println("Directory /config created.");
+    } else {
+      Serial.println("Failed to create directory /config");
+    }
+  }
+  File file = SD.open(filename, FILE_WRITE);
+  if (!file) {
+    Serial.println(F("Failed to create file"));
+    return;
+  }
+
+  // Allocate a temporary JsonDocument
+  JsonDocument doc;
+
+  // Set the values in the document
+  //doc["hostname"] = config.hostname;
+  //doc["port"] = config.port;
+  doc["tare"] = config.tare;
+  doc["scale"] = config.scale;
+
+  // Serialize JSON to file
+  if (serializeJson(doc, file) == 0) {
+    Serial.println(F("Failed to write to file"));
+  }
+
+  // Close the file
+  file.close();
+
+  // dump contents of file
+  File dataFile = SD.open(filename);
+
+  // if the file is available, write to it:
+  if (dataFile) {
+    while (dataFile.available()) {
+      Serial.write(dataFile.read());
+    }
+    dataFile.close();
+    Serial.println();
+  }
+  // if the file isn't open, pop up an error:
+  else {
+    Serial.println("error opening datalog.txt");
+  }
+
+}
+
+void setupSensor_NAU7802_loadcell1() {
+  bool found7802 = false;
+  MP.selectChannel(LOADCELL1_CHANNEL);
+  if (nau1.begin(&Wire1)) {
+    found7802 = true;
+    Serial.print("... Success!");
+      Serial.println();
+  } else {
+    Serial.println("...FAIL");
+  }
+  if (!found7802) {
+    Serial.println("Failed to find NAU7802");
+    while (1) delay(10);  // Don't proceed.
+  }
+
+
+  nau1.setLDO(NAU7802_4V5);
+  Serial.print("LDO voltage set to ");
+  switch (nau1.getLDO()) {
+    case NAU7802_4V5:  Serial.println("4.5V"); break;
+    case NAU7802_4V2:  Serial.println("4.2V"); break;
+    case NAU7802_3V9:  Serial.println("3.9V"); break;
+    case NAU7802_3V6:  Serial.println("3.6V"); break;
+    case NAU7802_3V3:  Serial.println("3.3V"); break;
+    case NAU7802_3V0:  Serial.println("3.0V"); break;
+    case NAU7802_2V7:  Serial.println("2.7V"); break;
+    case NAU7802_2V4:  Serial.println("2.4V"); break;
+    case NAU7802_EXTERNAL:  Serial.println("External"); break;
+  }
+
+  nau1.setGain(NAU7802_GAIN_128);
+  Serial.print("Gain set to ");
+  switch (nau1.getGain()) {
+    case NAU7802_GAIN_1:  Serial.println("1x"); break;
+    case NAU7802_GAIN_2:  Serial.println("2x"); break;
+    case NAU7802_GAIN_4:  Serial.println("4x"); break;
+    case NAU7802_GAIN_8:  Serial.println("8x"); break;
+    case NAU7802_GAIN_16:  Serial.println("16x"); break;
+    case NAU7802_GAIN_32:  Serial.println("32x"); break;
+    case NAU7802_GAIN_64:  Serial.println("64x"); break;
+    case NAU7802_GAIN_128:  Serial.println("128x"); break;
+  }
+
+  nau1.setRate(NAU7802_RATE_40SPS);
+  Serial.print("Conversion rate set to ");
+  switch (nau1.getRate()) {
+    case NAU7802_RATE_10SPS:  Serial.println("10 SPS"); break;
+    case NAU7802_RATE_20SPS:  Serial.println("20 SPS"); break;
+    case NAU7802_RATE_40SPS:  Serial.println("40 SPS"); break;
+    case NAU7802_RATE_80SPS:  Serial.println("80 SPS"); break;
+    case NAU7802_RATE_320SPS:  Serial.println("320 SPS"); break;
+  }
+
+  // Take 10 readings to flush out readings
+  //for (uint8_t i=0; i<10; i++) {
+  //  while (! nau.available()) delay(1);
+  //  nau.read();
+  //}
+
+  // SINGLE CHANNEL ONLY!!!
+  // enable use of PGA stabilizer caps (Cfilter) on VIN2
+  nau1.setPGACap(true);
+}
+
+void printSensor_NAU7802_loadcell1(bool force) {
+  // Multiplex Ops & Sensor Ops
+  MP.selectChannel(LOADCELL1_CHANNEL);
+  while (! nau1.available()) {
+    delay(1);
+  }
+  int32_t measure_raw = nau1.read() >> 4;
+
+  // Convert measurement to weight
+  int32_t measure_tared = measure_raw - config_lc1.tare;
+  float weight = config_lc1.scale * (float)measure_tared;
+  if (force) {
+    NAU7802_filter1.setValue(weight);
+  } else {
+    NAU7802_filter1.filter(weight);
+  }
+  scale1_val = NAU7802_filter1.getValue();
+
+  // Menu Ops
+  if (menu_cal_scale1 && menu_cal_scale1_testWeight_set) {
+  float menu_measure = (float)(measure_raw - menu_cal_scale1_tare) * menu_cal_scale1_scaleFactor;
+  if (menu_cal_scale1_measure_first) {
+    menu_cal_scale1_measure.setValue(menu_measure);
+    menu_cal_scale1_measure_first = false;
+    Serial.print(",");
+  } else {
+    menu_cal_scale1_measure.filter(menu_measure);
+    Serial.print(".");
+  }
+  menu_cal_scale1_measure_val = menu_cal_scale1_measure.getValue();
+  if (millis() - nau_print1_last >= NAU7802_PRINT_TIME){
+    Serial.print("---> Scale1 Measure: ");
+      Serial.println(menu_cal_scale1_measure_val);
+    nau_print1_last = millis();
+  }
+}
+
+  // Serial Output
+  if (millis() - nau_print1_last >= NAU7802_PRINT_TIME && !menu_cal_scale1 && !menu_cal_scale2) {
+    Serial.print("Loadcell1 Reading: ");
+      Serial.print(scale1_val);
+    //Serial.print(" \t print time: ");
+    //  Serial.print(millis() - nau_print1_last);
+    if (millis() - nau_print1_last > NAU7802_PRINT_TIME * 2) {
+      nau_print1_last = millis();
+    } else {
+      nau_print1_last = nau_print1_last + NAU7802_PRINT_TIME;
+    }
+    Serial.println();
+  }
+}
+
+void setupSensor_NAU7802_loadcell2() {
+  bool found7802 = false;
+  MP.selectChannel(LOADCELL2_CHANNEL);
+  if (nau2.begin(&Wire1)) {
+    found7802 = true;
+    Serial.print("... Success!");
+      Serial.println();
+  } else {
+    Serial.println("...FAIL");
+  }
+  if (!found7802) {
+    Serial.println("Failed to find NAU7802");
+    while (1) delay(10);  // Don't proceed.
+  }
+
+
+  nau2.setLDO(NAU7802_4V5);
+  Serial.print("LDO voltage set to ");
+  switch (nau2.getLDO()) {
+    case NAU7802_4V5:  Serial.println("4.5V"); break;
+    case NAU7802_4V2:  Serial.println("4.2V"); break;
+    case NAU7802_3V9:  Serial.println("3.9V"); break;
+    case NAU7802_3V6:  Serial.println("3.6V"); break;
+    case NAU7802_3V3:  Serial.println("3.3V"); break;
+    case NAU7802_3V0:  Serial.println("3.0V"); break;
+    case NAU7802_2V7:  Serial.println("2.7V"); break;
+    case NAU7802_2V4:  Serial.println("2.4V"); break;
+    case NAU7802_EXTERNAL:  Serial.println("External"); break;
+  }
+
+  nau2.setGain(NAU7802_GAIN_128);
+  Serial.print("Gain set to ");
+  switch (nau2.getGain()) {
+    case NAU7802_GAIN_1:  Serial.println("1x"); break;
+    case NAU7802_GAIN_2:  Serial.println("2x"); break;
+    case NAU7802_GAIN_4:  Serial.println("4x"); break;
+    case NAU7802_GAIN_8:  Serial.println("8x"); break;
+    case NAU7802_GAIN_16:  Serial.println("16x"); break;
+    case NAU7802_GAIN_32:  Serial.println("32x"); break;
+    case NAU7802_GAIN_64:  Serial.println("64x"); break;
+    case NAU7802_GAIN_128:  Serial.println("128x"); break;
+  }
+
+  nau2.setRate(NAU7802_RATE_40SPS);
+  Serial.print("Conversion rate set to ");
+  switch (nau2.getRate()) {
+    case NAU7802_RATE_10SPS:  Serial.println("10 SPS"); break;
+    case NAU7802_RATE_20SPS:  Serial.println("20 SPS"); break;
+    case NAU7802_RATE_40SPS:  Serial.println("40 SPS"); break;
+    case NAU7802_RATE_80SPS:  Serial.println("80 SPS"); break;
+    case NAU7802_RATE_320SPS:  Serial.println("320 SPS"); break;
+  }
+
+  // Take 10 readings to flush out readings
+  //for (uint8_t i=0; i<10; i++) {
+  //  while (! nau.available()) delay(1);
+  //  nau.read();
+  //}
+
+  // SINGLE CHANNEL ONLY!!!
+  // enable use of PGA stabilizer caps (Cfilter) on VIN2
+  nau2.setPGACap(true);
+}
+
+void printSensor_NAU7802_loadcell2(bool force) {
+  // Multiplex Ops & Sensor Ops
+  MP.selectChannel(LOADCELL2_CHANNEL);
+  while (! nau2.available()) {
+    delay(1);
+  }
+  int32_t measure_raw = nau2.read() >> 4;
+
+  // Convert ADC measurement to weight
+  long measure_tared = measure_raw - config_lc2.tare;
+  float weight = config_lc2.scale * (float)measure_tared;
+  if (force) {
+    NAU7802_filter2.setValue((float)weight);
+  } else {
+    NAU7802_filter2.filter((float)weight);
+  }
+  scale2_val = NAU7802_filter2.getValue();
+
+  // Menu Ops
+  if (menu_cal_scale2 && menu_cal_scale2_testWeight_set) {
+    float menu_measure = (float)(measure_raw - menu_cal_scale2_tare) * menu_cal_scale2_scaleFactor;
+    if (menu_cal_scale2_measure_first) {
+      menu_cal_scale2_measure.setValue(menu_measure);
+      menu_cal_scale2_measure_first = false;
+      Serial.print(",");
+    } else {
+      menu_cal_scale2_measure.filter(menu_measure);
+      Serial.print(".");
+    }
+    menu_cal_scale2_measure_val = menu_cal_scale2_measure.getValue();
+    if (millis() - nau_print2_last >= NAU7802_PRINT_TIME){
+      Serial.print("---> Scale2 Measure: ");
+        Serial.println(menu_cal_scale2_measure_val);
+      nau_print2_last = millis();
+    }
+  }
+
+  // Serial Output
+  if (millis() - nau_print2_last >= NAU7802_PRINT_TIME && !menu_cal_scale1 && !menu_cal_scale2) {
+    Serial.print("Loadcell2 Reading: ");
+      Serial.print(scale2_val);
+    //Serial.print(" \t print time: ");
+    //  Serial.print(millis() - nau_print2_last);
+    if (millis() - nau_print2_last > NAU7802_PRINT_TIME * 2) {
+      nau_print2_last = millis();
+    } else {
+      nau_print2_last = nau_print2_last + NAU7802_PRINT_TIME;
+    }
+    Serial.println();
+  }
+}
+
+void setupPCA9548() {
+  Serial.print("Connection to PCA9548...");
+  if (MP.begin()) {
+    Serial.println("Success!");
+  } else {
+    Serial.println("Fail!");
+    Serial.println("Halting for PCA9548");
+    while(1) {
+      delay(1);
+    }
+  }
+}
+
+void MultiplexI2CScan() {
+  channels = MP.channelCount();
+  //Serial.print("CHAN:\t");
+  //Serial.println(channels);
+
+  for (int chan = 0; chan < channels; chan++ ) {
+    Serial.print("Selecting channel ");
+      Serial.println(chan);
+    MP.disableAllChannels();
+    MP.selectChannel(chan);
+    //  adjust address range to your needs.
+    bool channel_good = false;
+    for (uint8_t addr = 8; addr < 120; addr++) {
+      //if (addr % 10 == 0) Serial.println();
+      bool isconnected = MP.isConnected(addr);
+      if (isconnected && addr != 0x70) {
+        //MP.enableChannel(chan);
+        Serial.print("Found device on ");
+        Serial.print(addr, HEX);
+        Serial.println();
+        channel_good = true;
+      }
+    }
+    //Serial.print("Channel Mask: ");
+    //  Serial.println(MP.getChannelMask());
+    Serial.println();
+  }
+
+  Serial.println("done...");
+  Serial.println();
 }

@@ -19,15 +19,15 @@ float pres_val = 0;
 // Backlight Control
   extern LiquidCrystal_I2C lcd;
   void toggleBacklight(bool isOn);
+  extern void loadcell_config_save2File(const char* filename, loadcell_config &config);
 
 #include <JWT_Menu_FileLogger.h>
 
 // Calibrate Scale 1
   // From Main:
     extern bool menu_cal_scale1;
-    extern long  cal_scale1_tare;
-    extern float cal_scale1_scale;
-    extern expFilter scale1_filter;
+    extern loadcell_config config_lc1;
+  int32_t scale1_read_times(int times = 25);
   void Menu_Scale1_Start();
   void Menu_Scale1_Tare();
   void Menu_Scale1_Scale();
@@ -35,7 +35,7 @@ float pres_val = 0;
   void Menu_Scale1_Reset();
   void Menu_Scale1_Cancel();
   void Combine_Scale1_testWeight(int digit1, int digit2, int digit3, int digit4, int digit5);
-  long  menu_cal_scale1_tare        =   0;
+  int32_t  menu_cal_scale1_tare     =   0;
   float menu_cal_scale1_testWeight  = 0.0;
   float menu_cal_scale1_scaleFactor = 0.0;
   float menu_cal_scale1_measure_val = 0.0;
@@ -44,14 +44,12 @@ float pres_val = 0;
     #define CAL_MEASURE_FILTER_WEIGHT .75
     bool menu_cal_scale1_measure_first = false;
   // Quadratic LSS Regression
-    #include "JWT_Menu_Quad.h"
+    //#include "JWT_Menu_Quad.h"
 
 // Calibrate Scale 2
   // From Main:
     extern bool menu_cal_scale2;
-    extern long  cal_scale2_tare;
-    extern float cal_scale2_scale;
-    extern expFilter scale2_filter;
+    extern loadcell_config config_lc1;
   long  menu_cal_scale2_tare        =   0;
   float menu_cal_scale2_testWeight  = 0.0;
   float menu_cal_scale2_scaleFactor = 0.0;
@@ -59,6 +57,7 @@ float pres_val = 0;
   bool menu_cal_scale2_testWeight_set = false;
   expFilter menu_cal_scale2_measure;
     bool menu_cal_scale2_measure_first = false;
+  int32_t scale2_read_times(int times = 25);
   void Menu_Scale2_Start();
   void Menu_Scale2_Tare();
   void Menu_Scale2_Scale();
@@ -76,7 +75,7 @@ extern MenuScreen* calibrateScale2Screen;
 extern MenuScreen* calibratePitotScreen;
 
 MENU_SCREEN(mainScreen, mainItems,
-  ITEM_VALUE("Quad1 ", measure_quad, "%.0f"),
+  //ITEM_VALUE("Quad1 ", measure_quad, "%.0f"),
   ITEM_VALUE("Scale1", scale1_val, "%.0f"),
   ITEM_VALUE("Scale2", scale2_val, "%.0f"),
   ITEM_VALUE("dPres ",  pres_val, "%.1f"),
@@ -87,7 +86,7 @@ MENU_SCREEN(mainScreen, mainItems,
 MENU_SCREEN(settingsScreen, settingsItems,
   ITEM_BACK(),
   ITEM_TOGGLE("Backlight", true, toggleBacklight),
-  ITEM_SUBMENU("Cal Scale1 Quad", calibrateScale1QuadScreen),
+  //ITEM_SUBMENU("Cal Scale1 Quad", calibrateScale1QuadScreen),
   ITEM_SUBMENU("Calibrate Scale1", calibrateScale1Screen),
   ITEM_SUBMENU("Calibrate Scale2", calibrateScale2Screen),
   ITEM_SUBMENU("Calibrate Pitot", calibratePitotScreen)
@@ -142,7 +141,29 @@ void toggleBacklight(bool isOn) {
 
 // ################################################### Callbacks for Scale1 ###################################################
 
+int32_t scale1_read_times(int times) {
+  int num_measurements = 0;
+  int32_t cum_measurement = 0;
+  while (num_measurements < times) {
+    MP.selectChannel(LOADCELL1_CHANNEL);
+    while (! nau1.available()) {
+      delay(1);
+    }
+    cum_measurement += nau1.read() >> 4;
+    num_measurements++;
+    Serial.print(".");
+  }
+  
+  int32_t average_measurement = cum_measurement / num_measurements;
+  Serial.print("---> Average Raw Measurement: ");
+    Serial.println(average_measurement);
+  return average_measurement;
+}
+
 void Combine_Scale1_testWeight(int digit1, int digit2, int digit3, int digit4, int digit5) {
+  if (!menu_cal_scale1) {
+    Menu_Scale1_Start();
+  }
   menu_cal_scale1_testWeight  = (float)digit1 * 1000.0;
   menu_cal_scale1_testWeight += (float)digit2 * 100.0;
   menu_cal_scale1_testWeight += (float)digit3 * 10.0;
@@ -157,7 +178,7 @@ void Menu_Scale1_Start() {
   menu_cal_scale1 = true;
   menu_cal_scale1_measure.setWeight(CAL_MEASURE_FILTER_WEIGHT);
   menu_cal_scale1_measure_first = true;
-  menu_cal_scale1_scaleFactor = cal_scale1_scale;
+  menu_cal_scale1_scaleFactor = config_lc1.scale;
   //Serial.print("---> New Measure filter weight: ");
   //  Serial.println(menu_cal_scale1_measure.getWeight());
 }
@@ -166,7 +187,8 @@ void Menu_Scale1_Tare() {
   if (!menu_cal_scale1) {
     Menu_Scale1_Start();
   }
-  menu_cal_scale1_tare = scale1.read_average(25) >> 8;
+  menu_cal_scale1_tare = scale1_read_times();
+
   Serial.print("---> Scale1 Tare: ");
     Serial.println(menu_cal_scale1_tare);
 }
@@ -175,35 +197,38 @@ void Menu_Scale1_Scale() {
   // Scale Factor = {Test Weight} / (Reading - Tare)
   menu_cal_scale1_testWeight_set = true;
   menu_cal_scale1_measure_first = true;
-  long scale_reading = scale1.read_average(25) >> 8;
+  int32_t scale_reading = scale1_read_times();
   menu_cal_scale1_scaleFactor = menu_cal_scale1_testWeight / (float)(scale_reading - menu_cal_scale1_tare);
   Serial.print("---> Scale1 Scale: ");
     Serial.println(menu_cal_scale1_scaleFactor);
 }
 
 void Menu_Scale1_Accept() {
-  cal_scale1_tare = menu_cal_scale1_tare;
-  cal_scale1_scale = menu_cal_scale1_scaleFactor;
+  config_lc1.tare = menu_cal_scale1_tare;
+  config_lc1.scale = menu_cal_scale1_scaleFactor;
   menu_cal_scale1 = false;
   menu_cal_scale1_testWeight_set = false;
+
+  loadcell_config_save2File(FILENAME_CONFIG_LC1, config_lc1);
+
   menu.setScreen(settingsScreen);
-  scale1_filter.setValue(menu_cal_scale1_measure_val);
   Serial.print("---> Accepted Tare: ");
-    Serial.println(cal_scale1_tare);
+    Serial.println(config_lc1.tare);
   Serial.print("---> Accepted Scale: ");
-    Serial.println(cal_scale1_scale);
-  Serial.print("Assorted booleans: 1.");
-    Serial.print(menu_cal_scale1);
-    Serial.print(" 2.");
-    Serial.println(menu_cal_scale1_testWeight_set);
+    Serial.println(config_lc1.scale);
+  //Serial.print("Assorted booleans: 1.");
+  //  Serial.print(menu_cal_scale1);
+  //  Serial.print(" 2.");
+  //  Serial.println(menu_cal_scale1_testWeight_set);
 }
 
 void Menu_Scale1_Reset() {
-  cal_scale1_tare = 0;
-  cal_scale1_scale = 1;
+  config_lc1.tare = 0;
+  config_lc1.scale = 1;
   menu_cal_scale1 = false;
   menu_cal_scale1_testWeight_set = false;
   menu.setScreen(settingsScreen);
+  loadcell_config_save2File(FILENAME_CONFIG_LC1, config_lc1);
 }
 
 void Menu_Scale1_Cancel() {
@@ -226,20 +251,39 @@ void Combine_Scale2_testWeight(int digit1, int digit2, int digit3, int digit4, i
   Menu_Scale2_Scale();
 }
 
+int32_t scale2_read_times(int times) {
+  int num_measurements = 0;
+  int32_t cum_measurement = 0;
+  while (num_measurements < times) {
+    MP.selectChannel(LOADCELL2_CHANNEL);
+    while (! nau2.available()) {
+      delay(1);
+    }
+    cum_measurement += nau2.read() >> 4;
+    num_measurements++;
+    Serial.print(".");
+  }
+  
+  int32_t average_measurement = cum_measurement / num_measurements;
+  Serial.print("---> Average Raw Measurement: ");
+    Serial.println(average_measurement);
+  return average_measurement;
+}
+
 void Menu_Scale2_Start() {
   menu_cal_scale2 = true;
   menu_cal_scale2_measure.setWeight(CAL_MEASURE_FILTER_WEIGHT);
   menu_cal_scale2_measure_first = true;
-  menu_cal_scale2_scaleFactor = cal_scale2_scale;
-  Serial.print("---> New Measure2 filter weight: ");
-    Serial.println(menu_cal_scale1_measure.getWeight());
+  menu_cal_scale2_scaleFactor = config_lc2.scale;
+  //Serial.print("---> New Measure2 filter weight: ");
+  //  Serial.println(menu_cal_scale1_measure.getWeight());
 }
 
 void Menu_Scale2_Tare() {
   if (!menu_cal_scale1) {
     Menu_Scale2_Start();
   }
-  menu_cal_scale2_tare = scale2.read_average(25) >> 8;
+  menu_cal_scale2_tare = scale2_read_times();
   Serial.print("---> Scale2 Tare: ");
     Serial.println(menu_cal_scale2_tare);
 }
@@ -248,35 +292,39 @@ void Menu_Scale2_Scale() {
   // Scale Factor = {Test Weight} / (Reading - Tare)
   menu_cal_scale2_measure_first = true;
   menu_cal_scale2_testWeight_set = true;
-  long scale_reading = scale2.read_average(25) >> 8;
+  long scale_reading = scale2_read_times();
   menu_cal_scale2_scaleFactor = menu_cal_scale2_testWeight / (float)(scale_reading - menu_cal_scale2_tare);
   Serial.print("---> Scale2 Scale: ");
     Serial.println(menu_cal_scale2_scaleFactor);
 }
 
 void Menu_Scale2_Accept() {
-  cal_scale2_tare = menu_cal_scale2_tare;
-  cal_scale2_scale = menu_cal_scale2_scaleFactor;
+  config_lc2.tare = menu_cal_scale2_tare;
+  config_lc2.scale = menu_cal_scale2_scaleFactor;
   menu_cal_scale2 = false;
   menu_cal_scale2_testWeight_set = false;
-  scale2_filter.setValue(menu_cal_scale2_measure_val);
+
+  loadcell_config_save2File(FILENAME_CONFIG_LC2, config_lc2);
+
   menu.setScreen(settingsScreen);
   Serial.print("---> Accepted Tare: ");
-    Serial.println(cal_scale2_tare);
+    Serial.println(config_lc2.tare);
   Serial.print("---> Accepted Scale: ");
-    Serial.println(cal_scale2_scale);
-  Serial.print("Assorted booleans: 1.");
-    Serial.print(menu_cal_scale2);
-    Serial.print(" 2.");
-    Serial.println(menu_cal_scale2_testWeight_set);
+    Serial.println(config_lc2.scale);
+  //Serial.print("Assorted booleans: 1.");
+  //  Serial.print(menu_cal_scale2);
+  //  Serial.print(" 2.");
+  //  Serial.println(menu_cal_scale2_testWeight_set);
 }
 
 void Menu_Scale2_Reset() {
-  cal_scale2_tare = 0;
-  cal_scale2_scale = 1;
+  config_lc2.tare = 0;
+  config_lc2.scale = 1;
   menu_cal_scale2 = false;
   menu_cal_scale2_testWeight_set = false;
   menu.setScreen(settingsScreen);
+
+  loadcell_config_save2File(FILENAME_CONFIG_LC2, config_lc2);
 }
 
 void Menu_Scale2_Cancel() {

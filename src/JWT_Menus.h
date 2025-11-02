@@ -66,6 +66,18 @@ float pres_val = 0;
   void Menu_Scale2_Cancel();
   void Combine_Scale2_testWeight(int digit1, int digit2, int digit3, int digit4, int digit5);
 
+// Calibrate Pressure
+  float menu_cal_press_tare = 0;
+  bool menu_cal_press = false;
+  float menu_press_airDensity = 1.285;
+  float press_read_times(int times = 80); // 80 times @ 40sps is ~2s
+  void Menu_Press_SetAirDensity(float density);
+  void Menu_Press_Tare();
+  void Menu_Press_Accept();
+  void Menu_Press_Reset();
+  void Menu_Press_Cancel();
+
+
 #define MENU_POLL_TIME 1000
 
 extern MenuScreen* settingsScreen;
@@ -78,7 +90,7 @@ MENU_SCREEN(mainScreen, mainItems,
   //ITEM_VALUE("Quad1 ", measure_quad, "%.0f"),
   ITEM_VALUE("Scale1", scale1_val, "%.0f"),
   ITEM_VALUE("Scale2", scale2_val, "%.0f"),
-  ITEM_VALUE("dPres ",  pres_val, "%.1f"),
+  ITEM_VALUE(press_display_name,  press_display, "%.1f"),
   ITEM_SUBMENU("Settings", settingsScreen),
   ITEM_SUBMENU("Data Logger", dataLoggerScreen)
 );
@@ -131,8 +143,14 @@ MENU_SCREEN(calibrateScale2Screen, calibrateScale2Items,
 );
 
 MENU_SCREEN(calibratePitotScreen, calibratePitotItems,
-  ITEM_BASIC("Tare"),
-  ITEM_BACK("Cancel"),
+  ITEM_COMMAND("Tare", Menu_Press_Tare),
+  ITEM_VALUE("dPres ",  pres_val, "%.1f"),
+  ITEM_WIDGET(
+        "Density", [](float menu_density) {Menu_Press_SetAirDensity(menu_density);},
+        WIDGET_RANGE(menu_press_airDensity, 0.001f, 1.000f, 1.300f, "%0.3f", 0)),
+  ITEM_COMMAND("Accept", Menu_Press_Accept),
+  ITEM_COMMAND("Reset", Menu_Press_Reset),
+  ITEM_COMMAND("Cancel", Menu_Press_Cancel)
   );
 
 void toggleBacklight(bool isOn) {
@@ -142,22 +160,27 @@ void toggleBacklight(bool isOn) {
 // ################################################### Callbacks for Scale1 ###################################################
 
 int32_t scale1_read_times(int times) {
-  int num_measurements = 0;
-  int32_t cum_measurement = 0;
-  while (num_measurements < times) {
-    MP.selectChannel(LOADCELL1_CHANNEL);
-    while (! nau1.available()) {
-      delay(1);
+  if (scale1_connected) {
+    int num_measurements = 0;
+    int32_t cum_measurement = 0;
+    while (num_measurements < times) {
+      MP.selectChannel(LOADCELL1_CHANNEL);
+      while (! nau1.available()) {
+        delay(1);
+      }
+      cum_measurement += nau1.read() >> 4;
+      num_measurements++;
+      Serial.print(".");
     }
-    cum_measurement += nau1.read() >> 4;
-    num_measurements++;
-    Serial.print(".");
+    
+    int32_t average_measurement = cum_measurement / num_measurements;
+    Serial.print("---> Average Raw Measurement: ");
+      Serial.println(average_measurement);
+    return average_measurement;
+  } else {
+    return 0;
   }
   
-  int32_t average_measurement = cum_measurement / num_measurements;
-  Serial.print("---> Average Raw Measurement: ");
-    Serial.println(average_measurement);
-  return average_measurement;
 }
 
 void Combine_Scale1_testWeight(int digit1, int digit2, int digit3, int digit4, int digit5) {
@@ -175,12 +198,16 @@ void Combine_Scale1_testWeight(int digit1, int digit2, int digit3, int digit4, i
 }
 
 void Menu_Scale1_Start() {
-  menu_cal_scale1 = true;
-  menu_cal_scale1_measure.setWeight(CAL_MEASURE_FILTER_WEIGHT);
-  menu_cal_scale1_measure_first = true;
-  menu_cal_scale1_scaleFactor = config_lc1.scale;
-  //Serial.print("---> New Measure filter weight: ");
-  //  Serial.println(menu_cal_scale1_measure.getWeight());
+  if (scale1_connected) {
+    menu_cal_scale1 = true;
+    menu_cal_scale1_measure.setWeight(CAL_MEASURE_FILTER_WEIGHT);
+    menu_cal_scale1_measure_first = true;
+    menu_cal_scale1_scaleFactor = config_lc1.scale;
+    //Serial.print("---> New Measure filter weight: ");
+    //  Serial.println(menu_cal_scale1_measure.getWeight());
+  } else {
+    Menu_Scale1_Cancel();
+  }
 }
 
 void Menu_Scale1_Tare() {
@@ -208,10 +235,11 @@ void Menu_Scale1_Accept() {
   config_lc1.scale = menu_cal_scale1_scaleFactor;
   menu_cal_scale1 = false;
   menu_cal_scale1_testWeight_set = false;
+  menu_cal_scale1_measure.setWeight(LOADCELL_FILTER_WEIGHT);
 
   loadcell_config_save2File(FILENAME_CONFIG_LC1, config_lc1);
 
-  menu.setScreen(settingsScreen);
+  
   Serial.print("---> Accepted Tare: ");
     Serial.println(config_lc1.tare);
   Serial.print("---> Accepted Scale: ");
@@ -220,6 +248,8 @@ void Menu_Scale1_Accept() {
   //  Serial.print(menu_cal_scale1);
   //  Serial.print(" 2.");
   //  Serial.println(menu_cal_scale1_testWeight_set);
+
+  menu.setScreen(settingsScreen);
 }
 
 void Menu_Scale1_Reset() {
@@ -227,13 +257,15 @@ void Menu_Scale1_Reset() {
   config_lc1.scale = 1;
   menu_cal_scale1 = false;
   menu_cal_scale1_testWeight_set = false;
-  menu.setScreen(settingsScreen);
+  menu_cal_scale1_measure.setWeight(LOADCELL_FILTER_WEIGHT);
   loadcell_config_save2File(FILENAME_CONFIG_LC1, config_lc1);
+  menu.setScreen(settingsScreen);
 }
 
 void Menu_Scale1_Cancel() {
   menu_cal_scale1 = false;
   menu_cal_scale1_testWeight_set = false;
+  menu_cal_scale1_measure.setWeight(LOADCELL_FILTER_WEIGHT);
   menu.setScreen(settingsScreen);
 }
 
@@ -252,31 +284,41 @@ void Combine_Scale2_testWeight(int digit1, int digit2, int digit3, int digit4, i
 }
 
 int32_t scale2_read_times(int times) {
-  int num_measurements = 0;
-  int32_t cum_measurement = 0;
-  while (num_measurements < times) {
-    MP.selectChannel(LOADCELL2_CHANNEL);
-    while (! nau2.available()) {
-      delay(1);
+  if (scale2_connected) {
+    int num_measurements = 0;
+    int32_t cum_measurement = 0;
+    while (num_measurements < times) {
+      MP.selectChannel(LOADCELL2_CHANNEL);
+      while (! nau2.available()) {
+        delay(1);
+      }
+      cum_measurement += nau2.read() >> 4;
+      num_measurements++;
+      Serial.print(".");
     }
-    cum_measurement += nau2.read() >> 4;
-    num_measurements++;
-    Serial.print(".");
+    
+    int32_t average_measurement = cum_measurement / num_measurements;
+    Serial.print("---> Average Raw Measurement: ");
+      Serial.println(average_measurement);
+    return average_measurement;
+  } else {
+    return 0;
   }
-  
-  int32_t average_measurement = cum_measurement / num_measurements;
-  Serial.print("---> Average Raw Measurement: ");
-    Serial.println(average_measurement);
-  return average_measurement;
+
 }
 
 void Menu_Scale2_Start() {
-  menu_cal_scale2 = true;
-  menu_cal_scale2_measure.setWeight(CAL_MEASURE_FILTER_WEIGHT);
-  menu_cal_scale2_measure_first = true;
-  menu_cal_scale2_scaleFactor = config_lc2.scale;
-  //Serial.print("---> New Measure2 filter weight: ");
-  //  Serial.println(menu_cal_scale1_measure.getWeight());
+  if (scale2_connected) {
+    menu_cal_scale2 = true;
+    menu_cal_scale2_measure.setWeight(CAL_MEASURE_FILTER_WEIGHT);
+    menu_cal_scale2_measure_first = true;
+    menu_cal_scale2_scaleFactor = config_lc2.scale;
+    //Serial.print("---> New Measure2 filter weight: ");
+    //  Serial.println(menu_cal_scale1_measure.getWeight());
+  } else {
+    Menu_Scale2_Cancel();
+  }
+
 }
 
 void Menu_Scale2_Tare() {
@@ -303,6 +345,7 @@ void Menu_Scale2_Accept() {
   config_lc2.scale = menu_cal_scale2_scaleFactor;
   menu_cal_scale2 = false;
   menu_cal_scale2_testWeight_set = false;
+  menu_cal_scale2_measure.setWeight(LOADCELL_FILTER_WEIGHT);
 
   loadcell_config_save2File(FILENAME_CONFIG_LC2, config_lc2);
 
@@ -322,13 +365,78 @@ void Menu_Scale2_Reset() {
   config_lc2.scale = 1;
   menu_cal_scale2 = false;
   menu_cal_scale2_testWeight_set = false;
-  menu.setScreen(settingsScreen);
-
+  menu_cal_scale2_measure.setWeight(LOADCELL_FILTER_WEIGHT);
   loadcell_config_save2File(FILENAME_CONFIG_LC2, config_lc2);
+  menu.setScreen(settingsScreen);  
 }
 
 void Menu_Scale2_Cancel() {
   menu_cal_scale2 = false;
   menu_cal_scale2_testWeight_set = false;
+  menu_cal_scale2_measure.setWeight(LOADCELL_FILTER_WEIGHT);
+  menu.setScreen(settingsScreen);
+}
+
+// ################################################### Callbacks for Pressure ###################################################
+
+void Menu_Press_SetAirDensity(float density) {
+  menu_press_airDensity = density;
+  Serial.print("---> Air Density Entered: ");
+    Serial.println(menu_press_airDensity,3);
+}
+
+float press_read_times(int times) {
+  int num_measurements = 0;
+  float cum_measurement = 0;
+  while (num_measurements < times) {
+    while (!pres.Read()) {
+      delay(1);
+    }
+    cum_measurement += pres.pres_pa();
+    num_measurements++;
+    Serial.print(".");
+  }
+  
+  float average_measurement = cum_measurement / num_measurements;
+  Serial.print("---> Average Raw Measurement: ");
+    Serial.println(average_measurement);
+  return average_measurement;
+}
+
+void Menu_Press_Tare() {
+  if (pres_connected) {
+    menu_cal_press = true;
+    menu_cal_press_tare = press_read_times();
+
+    Serial.print("---> Press Tare: ");
+      Serial.println(menu_cal_press_tare);
+  } else {
+    Menu_Press_Cancel();
+  }
+
+}
+
+void Menu_Press_Accept() {
+  press_tare = menu_cal_press_tare;
+  press_airDensity = menu_press_airDensity;
+  menu_cal_press = false;
+  Serial.print("---> Accepted Press Tare: ");
+    Serial.println(press_tare);
+  Serial.print("---> Accepted Air Density: ");
+    Serial.println(press_airDensity);
+  
+  menu.setScreen(settingsScreen);
+}
+
+void Menu_Press_Reset() {
+  press_tare = 0.0;
+  menu_cal_press = false;
+  press_airDensity = 0.0;
+  menu.setScreen(settingsScreen);
+}
+
+void Menu_Press_Cancel() {
+  menu_cal_press = false;
+  menu_cal_press_tare = 0.0;
   menu.setScreen(settingsScreen);
 }

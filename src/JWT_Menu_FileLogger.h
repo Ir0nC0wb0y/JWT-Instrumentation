@@ -1,5 +1,6 @@
 #pragma once
 #include <ItemBack.h>
+#include <ItemBool.h>
 #include <ItemCommand.h>
 #include <ItemSubMenu.h>
 #include <ItemWidget.h>

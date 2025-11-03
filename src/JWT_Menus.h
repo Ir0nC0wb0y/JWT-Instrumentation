@@ -35,6 +35,7 @@ float pres_val = 0;
   void Menu_Scale1_Reset();
   void Menu_Scale1_Cancel();
   void Combine_Scale1_testWeight(int digit1, int digit2, int digit3, int digit4, int digit5);
+  void PrepareNextRun();
   int32_t  menu_cal_scale1_tare     =   0;
   float menu_cal_scale1_testWeight  = 0.0;
   float menu_cal_scale1_scaleFactor = 0.0;
@@ -69,7 +70,7 @@ float pres_val = 0;
 // Calibrate Pressure
   float menu_cal_press_tare = 0;
   bool menu_cal_press = false;
-  float menu_press_airDensity = 1.285;
+  float menu_press_airDensity = 1.2;
   float press_read_times(int times = 80); // 80 times @ 40sps is ~2s
   void Menu_Press_SetAirDensity(float density);
   void Menu_Press_Tare();
@@ -98,8 +99,9 @@ MENU_SCREEN(mainScreen, mainItems,
 
 MENU_SCREEN(settingsScreen, settingsItems,
   ITEM_BACK(),
-  ITEM_TOGGLE("Backlight", true, toggleBacklight),
+  //ITEM_TOGGLE("Backlight", true, toggleBacklight),
   //ITEM_SUBMENU("Cal Scale1 Quad", calibrateScale1QuadScreen),
+  ITEM_COMMAND("Prepare Next Run", PrepareNextRun),
   ITEM_SUBMENU("Calibrate Scale1", calibrateScale1Screen),
   ITEM_SUBMENU("Calibrate Scale2", calibrateScale2Screen),
   ITEM_SUBMENU("Calibrate Pitot", calibratePitotScreen)
@@ -148,7 +150,7 @@ MENU_SCREEN(calibratePitotScreen, calibratePitotItems,
   ITEM_VALUE("dPres ",  pres_val, "%.1f"),
   ITEM_WIDGET(
         "Density", [](float menu_density) {Menu_Press_SetAirDensity(menu_density);},
-        WIDGET_RANGE(press_airDensity, 0.001f, 1.000f, 1.300f, "%0.3f", 0)),
+        WIDGET_RANGE(menu_press_airDensity, 0.001f, 1.000f, 1.300f, "%0.3f", 0)),
   ITEM_COMMAND("Accept", Menu_Press_Accept),
   ITEM_COMMAND("Reset", Menu_Press_Reset),
   ITEM_COMMAND("Cancel", Menu_Press_Cancel)
@@ -156,6 +158,26 @@ MENU_SCREEN(calibratePitotScreen, calibratePitotItems,
 
 void toggleBacklight(bool isOn) {
     lcd.setBacklight(isOn);
+}
+
+
+void PrepareNextRun() {
+  // Tare scale 1
+  Menu_Scale1_Tare();
+  config_lc1.tare = menu_cal_scale1_tare;
+
+  // Tare scale 2
+  Menu_Scale2_Start();
+  config_lc2.tare = menu_cal_scale2_tare;
+
+  // Tare pitot Tube
+  Menu_Press_Tare();
+  press_tare = menu_cal_press_tare;
+
+  // finish menu action
+  menu_cal_scale1 = false;
+  menu_cal_scale2 = false;
+  menu_cal_press  = false;
 }
 
 // ################################################### Callbacks for Scale1 ###################################################

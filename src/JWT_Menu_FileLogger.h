@@ -19,7 +19,7 @@ std::vector<const char*> pinChars = {" ", "_", "0", "1", "2", "3", "4", "5", "6"
 
 bool start_file_logging = false;
 bool stop_file_logging = false;
-unsigned long menu_file_write_period = file_write_period;
+//unsigned long menu_file_write_period = file_write_period;
 extern char* Filename_buffer;
 void dataLoggerStart();
 void dataLoggerStop();
@@ -47,10 +47,10 @@ void dataLoggerINITSD();
 MENU_SCREEN(dataLoggerScreen, dataLoggerItems,
   ITEM_BACK(),
   ITEM_VALUE("Logging",FileLogging_display,"%s"),
-  ITEM_SUBMENU("Filename", dataLoggeFilenameScreen),
   ITEM_WIDGET(
-        "Write Per [ms]", [](int menu_period) {dataLoggerPeriod(menu_period);},
+        "Write Per[ms]", [](int menu_period) {dataLoggerPeriod(menu_period);},
         WIDGET_RANGE((int)file_write_period, 250, 250, 5000, "%i", 0)),
+  ITEM_SUBMENU("Filename", dataLoggeFilenameScreen),
   ITEM_COMMAND("Start", dataLoggerStart),
   ITEM_COMMAND("EJECT", dataLoggerEJECT)
 );
@@ -159,14 +159,14 @@ void dataLoggerEJECT() {
   SD.end();
   Serial.println("Ejected SD Card");
   mainScreen -> removeLastItem();
-  delay(500);
+  delay(2000);
   digitalWrite(LED_BUILTIN,LOW);
   menu.setScreen(mainScreen);
   mainScreen -> addItem(ITEM_COMMAND("INIT SD",dataLoggerINITSD));
 }
 
 void dataLoggerPeriod(unsigned long period) {
-  menu_file_write_period = (unsigned long)period;
+  file_write_period = (unsigned long)period;
 }
 
 void dataLoggerINITSD() {

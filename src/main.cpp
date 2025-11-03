@@ -202,15 +202,6 @@ void loop() {
 
 }
 
-/*
-char* ResetCharBuffer(char* buffer) {
-  for (int i = 0; i < sizeof(buffer); i++) {
-    buffer[i] = '\0';
-  }
-  return buffer;
-}
-*/
-
 void SD_Initialization() {
   // SD Card Init
   pinMode(LED_BUILTIN,OUTPUT);
@@ -299,8 +290,8 @@ void HandleSDWrite() {
     }
 
     // print header
-    logFile.print("Time [ms], Scale1, Scale2, ");
-    logFile.println(press_display_name);
+    logFile.print("Time [ms], Scale1, Scale2, dPress [Pa], Windspeed [m/s]");
+    //logFile.println(press_display_name);
     
     file_write_last = millis()-2*file_write_period;
 
@@ -341,6 +332,7 @@ void HandleSDWrite() {
       dataLoggerScreen -> addItem(ITEM_COMMAND("EJECT", dataLoggerEJECT));
 
       FileLogging_display = "No";
+      file_write_first = 0;
   }
 
   if (FileLogging) {
@@ -361,7 +353,9 @@ void HandleSDWrite() {
         logFile.print(", ");
         logFile.print(scale2_val);
         logFile.print(", ");
-        logFile.println(press_display);
+        logFile.print(pres_val);
+        logFile.print(", ");
+        logFile.println(windspeed);
       file_write_last = file_write_last + file_write_period;
     }
   }
@@ -567,52 +561,54 @@ void printSensor_NAU7802_loadcell1(bool force) {
   if (scale1_connected) {
     // Multiplex Ops & Sensor Ops
     MP.selectChannel(LOADCELL1_CHANNEL);
-    while (! nau1.available()) {
-      delay(1);
-    }
-    int32_t measure_raw = nau1.read() >> 4;
+    if (nau1.available()) {
+      //while (! nau1.available()) {
+      //  delay(1);
+      //}
+      int32_t measure_raw = nau1.read() >> 4;
 
-    // Convert measurement to weight
-    int32_t measure_tared = measure_raw - config_lc1.tare;
-    float weight = config_lc1.scale * (float)measure_tared;
-    if (force) {
-      NAU7802_filter1.setValue(weight);
-    } else {
-      NAU7802_filter1.filter(weight);
-    }
-    scale1_val = NAU7802_filter1.getValue();
-
-    // Menu Ops
-    if (menu_cal_scale1 && menu_cal_scale1_testWeight_set) {
-      float menu_measure = (float)(measure_raw - menu_cal_scale1_tare) * menu_cal_scale1_scaleFactor;
-      if (menu_cal_scale1_measure_first) {
-        menu_cal_scale1_measure.setValue(menu_measure);
-        menu_cal_scale1_measure_first = false;
-        Serial.print(",");
+      // Convert measurement to weight
+      int32_t measure_tared = measure_raw - config_lc1.tare;
+      float weight = config_lc1.scale * (float)measure_tared;
+      if (force) {
+        NAU7802_filter1.setValue(weight);
       } else {
-        menu_cal_scale1_measure.filter(menu_measure);
-        Serial.print(".");
+        NAU7802_filter1.filter(weight);
       }
-      menu_cal_scale1_measure_val = menu_cal_scale1_measure.getValue();
-      if (millis() - nau_print1_last >= NAU7802_PRINT_TIME){
-        Serial.print("---> Scale1 Measure: ");
-          Serial.println(menu_cal_scale1_measure_val);
-        nau_print1_last = millis();
-      }
-    }
+      scale1_val = NAU7802_filter1.getValue();
 
-    // Serial Output
-    if (millis() - nau_print1_last >= NAU7802_PRINT_TIME && !menu_cal_scale1 && !menu_cal_scale2 && !menu_cal_press) {
-      Serial.print("Loadcell1 Reading: ");
-        Serial.print(scale1_val);
-      //Serial.print(" \t print time: ");
-      //  Serial.print(millis() - nau_print1_last);
-      if (millis() - nau_print1_last > NAU7802_PRINT_TIME * 2) {
-        nau_print1_last = millis();
-      } else {
-        nau_print1_last = nau_print1_last + NAU7802_PRINT_TIME;
+      // Menu Ops
+      if (menu_cal_scale1 && menu_cal_scale1_testWeight_set) {
+        float menu_measure = (float)(measure_raw - menu_cal_scale1_tare) * menu_cal_scale1_scaleFactor;
+        if (menu_cal_scale1_measure_first) {
+          menu_cal_scale1_measure.setValue(menu_measure);
+          menu_cal_scale1_measure_first = false;
+          Serial.print(",");
+        } else {
+          menu_cal_scale1_measure.filter(menu_measure);
+          Serial.print(".");
+        }
+        menu_cal_scale1_measure_val = menu_cal_scale1_measure.getValue();
+        if (millis() - nau_print1_last >= NAU7802_PRINT_TIME){
+          Serial.print("---> Scale1 Measure: ");
+            Serial.println(menu_cal_scale1_measure_val);
+          nau_print1_last = millis();
+        }
       }
-      Serial.println();
+
+      // Serial Output
+      if (millis() - nau_print1_last >= NAU7802_PRINT_TIME && !menu_cal_scale1 && !menu_cal_scale2 && !menu_cal_press) {
+        Serial.print("Loadcell1 Reading: ");
+          Serial.print(scale1_val);
+        //Serial.print(" \t print time: ");
+        //  Serial.print(millis() - nau_print1_last);
+        if (millis() - nau_print1_last > NAU7802_PRINT_TIME * 2) {
+          nau_print1_last = millis();
+        } else {
+          nau_print1_last = nau_print1_last + NAU7802_PRINT_TIME;
+        }
+        Serial.println();
+      }
     }
   }
 }
@@ -686,52 +682,54 @@ void printSensor_NAU7802_loadcell2(bool force) {
   if (scale1_connected) {
     // Multiplex Ops & Sensor Ops
     MP.selectChannel(LOADCELL2_CHANNEL);
-    while (! nau2.available()) {
-      delay(1);
-    }
-    int32_t measure_raw = nau2.read() >> 4;
+    if (nau2.available()) {
+      //while (! nau2.available()) {
+      //  delay(1);
+      //}
+      int32_t measure_raw = nau2.read() >> 4;
 
-    // Convert ADC measurement to weight
-    long measure_tared = measure_raw - config_lc2.tare;
-    float weight = config_lc2.scale * (float)measure_tared;
-    if (force) {
-      NAU7802_filter2.setValue((float)weight);
-    } else {
-      NAU7802_filter2.filter((float)weight);
-    }
-    scale2_val = NAU7802_filter2.getValue();
-
-    // Menu Ops
-    if (menu_cal_scale2 && menu_cal_scale2_testWeight_set) {
-      float menu_measure = (float)(measure_raw - menu_cal_scale2_tare) * menu_cal_scale2_scaleFactor;
-      if (menu_cal_scale2_measure_first) {
-        menu_cal_scale2_measure.setValue(menu_measure);
-        menu_cal_scale2_measure_first = false;
-        Serial.print(",");
+      // Convert ADC measurement to weight
+      long measure_tared = measure_raw - config_lc2.tare;
+      float weight = config_lc2.scale * (float)measure_tared;
+      if (force) {
+        NAU7802_filter2.setValue((float)weight);
       } else {
-        menu_cal_scale2_measure.filter(menu_measure);
-        Serial.print(".");
+        NAU7802_filter2.filter((float)weight);
       }
-      menu_cal_scale2_measure_val = menu_cal_scale2_measure.getValue();
-      if (millis() - nau_print2_last >= NAU7802_PRINT_TIME){
-        Serial.print("---> Scale2 Measure: ");
-          Serial.println(menu_cal_scale2_measure_val);
-        nau_print2_last = millis();
-      }
-    }
+      scale2_val = NAU7802_filter2.getValue();
 
-    // Serial Output
-    if (millis() - nau_print2_last >= NAU7802_PRINT_TIME && !menu_cal_scale1 && !menu_cal_scale2 && !menu_cal_press) {
-      Serial.print("Loadcell2 Reading: ");
-        Serial.print(scale2_val);
-      //Serial.print(" \t print time: ");
-      //  Serial.print(millis() - nau_print2_last);
-      if (millis() - nau_print2_last > NAU7802_PRINT_TIME * 2) {
-        nau_print2_last = millis();
-      } else {
-        nau_print2_last = nau_print2_last + NAU7802_PRINT_TIME;
+      // Menu Ops
+      if (menu_cal_scale2 && menu_cal_scale2_testWeight_set) {
+        float menu_measure = (float)(measure_raw - menu_cal_scale2_tare) * menu_cal_scale2_scaleFactor;
+        if (menu_cal_scale2_measure_first) {
+          menu_cal_scale2_measure.setValue(menu_measure);
+          menu_cal_scale2_measure_first = false;
+          Serial.print(",");
+        } else {
+          menu_cal_scale2_measure.filter(menu_measure);
+          Serial.print(".");
+        }
+        menu_cal_scale2_measure_val = menu_cal_scale2_measure.getValue();
+        if (millis() - nau_print2_last >= NAU7802_PRINT_TIME){
+          Serial.print("---> Scale2 Measure: ");
+            Serial.println(menu_cal_scale2_measure_val);
+          nau_print2_last = millis();
+        }
       }
-      Serial.println();
+
+      // Serial Output
+      if (millis() - nau_print2_last >= NAU7802_PRINT_TIME && !menu_cal_scale1 && !menu_cal_scale2 && !menu_cal_press) {
+        Serial.print("Loadcell2 Reading: ");
+          Serial.print(scale2_val);
+        //Serial.print(" \t print time: ");
+        //  Serial.print(millis() - nau_print2_last);
+        if (millis() - nau_print2_last > NAU7802_PRINT_TIME * 2) {
+          nau_print2_last = millis();
+        } else {
+          nau_print2_last = nau_print2_last + NAU7802_PRINT_TIME;
+        }
+        Serial.println();
+      }
     }
   }
 }
@@ -809,6 +807,7 @@ void pressure_handle() {
         press_display_name = "Speed";
 
       } else {
+        windspeed = 0;
         press_display = pres_val;
         press_display_name = "dPress";
       }

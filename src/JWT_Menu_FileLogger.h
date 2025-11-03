@@ -19,6 +19,7 @@ std::vector<const char*> pinChars = {" ", "_", "0", "1", "2", "3", "4", "5", "6"
 
 bool start_file_logging = false;
 bool stop_file_logging = false;
+unsigned long menu_file_write_period = file_write_period;
 extern char* Filename_buffer;
 void dataLoggerStart();
 void dataLoggerStop();
@@ -37,12 +38,21 @@ void dataLoggerFilenameConcat(const uint8_t char1, // could be as many as 5 char
                               const uint8_t char11 = 0,
                               const uint8_t char12 = 0,
                               const uint8_t char13 = 0);
+void dataLoggerEJECT();
+void dataLoggerPeriod(unsigned long period);
+extern void SD_Initialization();
+void dataLoggerINITSD();
+
 
 MENU_SCREEN(dataLoggerScreen, dataLoggerItems,
   ITEM_BACK(),
+  ITEM_VALUE("Logging",FileLogging_display,"%s"),
   ITEM_SUBMENU("Filename", dataLoggeFilenameScreen),
+  ITEM_WIDGET(
+        "Write Per [ms]", [](int menu_period) {dataLoggerPeriod(menu_period);},
+        WIDGET_RANGE((int)file_write_period, 250, 250, 5000, "%i", 0)),
   ITEM_COMMAND("Start", dataLoggerStart),
-  ITEM_COMMAND("Stop", dataLoggerStop)
+  ITEM_COMMAND("EJECT", dataLoggerEJECT)
 );
 
 MENU_SCREEN(dataLoggeFilenameScreen, dataLoggeFilenameItems,
@@ -142,4 +152,25 @@ void dataLoggerFilenameConcat(const uint8_t char1, // could be as many as 5 char
   }
   Serial.print("---> Entered filename: ");
     Serial.println(Filename_buffer);
+}
+
+
+void dataLoggerEJECT() {
+  SD.end();
+  Serial.println("Ejected SD Card");
+  mainScreen -> removeLastItem();
+  delay(500);
+  digitalWrite(LED_BUILTIN,LOW);
+  menu.setScreen(mainScreen);
+  mainScreen -> addItem(ITEM_COMMAND("INIT SD",dataLoggerINITSD));
+}
+
+void dataLoggerPeriod(unsigned long period) {
+  menu_file_write_period = (unsigned long)period;
+}
+
+void dataLoggerINITSD() {
+  SD_Initialization();
+  mainScreen -> removeLastItem();
+  mainScreen -> addItem(ITEM_SUBMENU("Data Logger", dataLoggerScreen));
 }

@@ -91,6 +91,7 @@ MENU_SCREEN(mainScreen, mainItems,
   ITEM_VALUE("Scale1", scale1_val, "%.0f"),
   ITEM_VALUE("Scale2", scale2_val, "%.0f"),
   ITEM_VALUE(press_display_name,  press_display, "%.1f"),
+  ITEM_VALUE("Logging",FileLogging_display,"%s"),
   ITEM_SUBMENU("Settings", settingsScreen),
   ITEM_SUBMENU("Data Logger", dataLoggerScreen)
 );
@@ -147,7 +148,7 @@ MENU_SCREEN(calibratePitotScreen, calibratePitotItems,
   ITEM_VALUE("dPres ",  pres_val, "%.1f"),
   ITEM_WIDGET(
         "Density", [](float menu_density) {Menu_Press_SetAirDensity(menu_density);},
-        WIDGET_RANGE(menu_press_airDensity, 0.001f, 1.000f, 1.300f, "%0.3f", 0)),
+        WIDGET_RANGE(press_airDensity, 0.001f, 1.000f, 1.300f, "%0.3f", 0)),
   ITEM_COMMAND("Accept", Menu_Press_Accept),
   ITEM_COMMAND("Reset", Menu_Press_Reset),
   ITEM_COMMAND("Cancel", Menu_Press_Cancel)

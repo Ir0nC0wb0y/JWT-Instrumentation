@@ -25,7 +25,7 @@
 //#include "JWT_Sensor_NAU7802.h"
 
 // SD Card
-  #define REQUIRE_SERIAL
+  //#define REQUIRE_SERIAL
   #include <SPI.h>
   #include <SD.h>
   #define SPI_PIN_MISO 16  // AKA SPI RX
@@ -40,9 +40,13 @@
     bool FileLogging = false;
     void HandleSDWrite();
     File logFile;
-    #define FILE_WRITE_PERIOD 250
+    //#define FILE_WRITE_PERIOD 250
+    unsigned long file_write_period = 250;
     unsigned long file_write_last = 0;
+    unsigned long file_write_first = 0;
     char* Filename_buffer = new char[25];
+    const char* FileLogging_display = "No";
+    const char* file_show;
 
 
 
@@ -142,26 +146,7 @@ void setup() {
   Serial.begin(115200);
   Serial.println("Starting sketch");
 
-  // SD Card Init
-    bool sdInitialized = false;
-    SPI.setRX(SPI_PIN_MISO);
-    SPI.setTX(SPI_PIN_MOSI);
-    SPI.setSCK(SPI_PIN_SCK);
-    sdInitialized = SD.begin(SPI_PIN_CS);
-    if (!sdInitialized) {
-      Serial.println("SD initialization failed!");
-      return;
-    }
-    Serial.println("SD initialization done.");
-    root = SD.open("/");
-    printDirectory(root, 0);
-    Serial.println();
-    //SD_Testing();
-    Serial.println();
-    Serial.println();
-    for (int i = 0; i < sizeof(Filename_buffer); i++) {
-      Filename_buffer[i] = '\0';
-    }
+  SD_Initialization();
   
   Wire.setSDA(I2C0_PIN_SDA);
   Wire.setSCL(I2C0_PIN_SCL);
@@ -226,6 +211,31 @@ char* ResetCharBuffer(char* buffer) {
 }
 */
 
+void SD_Initialization() {
+  // SD Card Init
+  pinMode(LED_BUILTIN,OUTPUT);
+  bool sdInitialized = false;
+  SPI.setRX(SPI_PIN_MISO);
+  SPI.setTX(SPI_PIN_MOSI);
+  SPI.setSCK(SPI_PIN_SCK);
+  sdInitialized = SD.begin(SPI_PIN_CS);
+  if (!sdInitialized) {
+    Serial.println("SD initialization failed!");
+    return;
+  }
+  digitalWrite(LED_BUILTIN,HIGH);
+  Serial.println("SD initialization done.");
+  root = SD.open("/");
+  printDirectory(root, 0);
+  Serial.println();
+  //SD_Testing();
+  Serial.println();
+  Serial.println();
+  for (int i = 0; i < sizeof(Filename_buffer); i++) {
+    Filename_buffer[i] = '\0';
+  }
+}
+
 void HandleSDWrite() {
   if (start_file_logging) {
     // clear start file flag
@@ -289,9 +299,24 @@ void HandleSDWrite() {
     }
 
     // print header
-    logFile.println("Time [ms], LoadCell1, LoadCell2, WindSpeed");
+    logFile.print("Time [ms], Scale1, Scale2, ");
+    logFile.println(press_display_name);
     
-    file_write_last = millis();
+    file_write_last = millis()-2*file_write_period;
+
+    // Change Menu
+      // Remove Filename Menu and "Start" Command
+      dataLoggerScreen -> removeLastItem();
+      dataLoggerScreen -> removeLastItem();
+      dataLoggerScreen -> removeLastItem();
+      delay(10);
+      // Add "Stop" Command
+      file_show = logFile.fullName();
+      Serial.print("Filename for menu: ");
+        Serial.println(file_show);
+      dataLoggerScreen -> addItem(ITEM_VALUE("File",file_show,"%s"));
+      dataLoggerScreen -> addItem(ITEM_COMMAND("Stop", dataLoggerStop));
+      dataLoggerScreen -> addItem(ITEM_COMMAND("EJECT", dataLoggerEJECT));
   }
 
   if (stop_file_logging) {
@@ -300,19 +325,44 @@ void HandleSDWrite() {
     // close file
     logFile.close();
     Serial.println("Stopped logging, Closed file");
+    FileLogging = false;
+
+    // Change Menu
+      // Remove Filename (1) display
+      // Remove Stop Command
+      dataLoggerScreen -> removeLastItem();
+      dataLoggerScreen -> removeLastItem();
+      dataLoggerScreen -> removeLastItem();
+      delay(10);
+      // Add Filename Menu
+      dataLoggerScreen -> addItem(ITEM_SUBMENU("Filename", dataLoggeFilenameScreen));
+      // Add Start Command
+      dataLoggerScreen -> addItem(ITEM_COMMAND("Start", dataLoggerStart));
+      dataLoggerScreen -> addItem(ITEM_COMMAND("EJECT", dataLoggerEJECT));
+
+      FileLogging_display = "No";
   }
 
   if (FileLogging) {
-    if (millis() - file_write_last >= FILE_WRITE_PERIOD) {
+    if (FileLogging_display != "Yes") {
+      FileLogging_display = "Yes";
+    }
+    if (millis() - file_write_last >= file_write_period) {
+      if (file_write_first == 0) {
+        file_write_first = millis();
+        logFile.print("0");
+      } else {
+        logFile.print(millis()-file_write_first);
+      }
       // Write Line
-      logFile.print(millis());
+      //logFile.print(millis());
         logFile.print(", ");
         logFile.print(scale1_val);
         logFile.print(", ");
         logFile.print(scale2_val);
         logFile.print(", ");
-        logFile.println(pres_val);
-      file_write_last = file_write_last + FILE_WRITE_PERIOD;
+        logFile.println(press_display);
+      file_write_last = file_write_last + file_write_period;
     }
   }
 }
@@ -779,12 +829,16 @@ void pressure_handle() {
   if (press_airDensity > 0) {
     if (press_display_name != "Speed") {
       press_display_name = "Speed";
+      mainScreen -> removeItemAt(2);
+      mainScreen -> addItemAt(2,ITEM_VALUE(press_display_name,  press_display, "%.1f"));
       Serial.print("Set press display name to ");
         Serial.println(press_display_name);
     }
   } else {
     if (press_display_name != "dPress") {
       press_display_name = "dPress";
+      mainScreen -> removeItemAt(2);
+      mainScreen -> addItemAt(2,ITEM_VALUE(press_display_name,  press_display, "%.1f"));
       Serial.print("Set press display name to ");
         Serial.println(press_display_name);
     }

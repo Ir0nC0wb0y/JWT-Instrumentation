@@ -262,7 +262,6 @@ void Menu_Scale1_Accept() {
 
   loadcell_config_save2File(FILENAME_CONFIG_LC1, config_lc1);
 
-  
   Serial.print("---> Accepted Tare: ");
     Serial.println(config_lc1.tare);
   Serial.print("---> Accepted Scale: ");
@@ -295,17 +294,6 @@ void Menu_Scale1_Cancel() {
 
 // ################################################### Callbacks for Scale2 ###################################################
 
-void Combine_Scale2_testWeight(int digit1, int digit2, int digit3, int digit4, int digit5) {
-  menu_cal_scale2_testWeight  = (float)digit1 * 1000.0;
-  menu_cal_scale2_testWeight += (float)digit2 * 100.0;
-  menu_cal_scale2_testWeight += (float)digit3 * 10.0;
-  menu_cal_scale2_testWeight += (float)digit4;
-  menu_cal_scale2_testWeight += (float)digit5 * 0.1;
-  Serial.print("---> Scale2 Test Weight: ");
-    Serial.println(menu_cal_scale2_testWeight);
-  Menu_Scale2_Scale();
-}
-
 int32_t scale2_read_times(int times) {
   if (scale2_connected) {
     int num_measurements = 0;
@@ -330,6 +318,20 @@ int32_t scale2_read_times(int times) {
 
 }
 
+void Combine_Scale2_testWeight(int digit1, int digit2, int digit3, int digit4, int digit5) {
+  if (!menu_cal_scale2) {
+    Menu_Scale2_Start();
+  }
+  menu_cal_scale2_testWeight  = (float)digit1 * 1000.0;
+  menu_cal_scale2_testWeight += (float)digit2 * 100.0;
+  menu_cal_scale2_testWeight += (float)digit3 * 10.0;
+  menu_cal_scale2_testWeight += (float)digit4;
+  menu_cal_scale2_testWeight += (float)digit5 * 0.1;
+  Serial.print("---> Scale2 Test Weight: ");
+    Serial.println(menu_cal_scale2_testWeight);
+  Menu_Scale2_Scale();
+}
+
 void Menu_Scale2_Start() {
   if (scale2_connected) {
     menu_cal_scale2 = true;
@@ -345,7 +347,7 @@ void Menu_Scale2_Start() {
 }
 
 void Menu_Scale2_Tare() {
-  if (!menu_cal_scale1) {
+  if (!menu_cal_scale2) {
     Menu_Scale2_Start();
   }
   menu_cal_scale2_tare = scale2_read_times();
@@ -371,8 +373,7 @@ void Menu_Scale2_Accept() {
   menu_cal_scale2_measure.setWeight(LOADCELL_FILTER_WEIGHT);
 
   loadcell_config_save2File(FILENAME_CONFIG_LC2, config_lc2);
-
-  menu.setScreen(settingsScreen);
+  
   Serial.print("---> Accepted Tare: ");
     Serial.println(config_lc2.tare);
   Serial.print("---> Accepted Scale: ");
@@ -381,6 +382,8 @@ void Menu_Scale2_Accept() {
   //  Serial.print(menu_cal_scale2);
   //  Serial.print(" 2.");
   //  Serial.println(menu_cal_scale2_testWeight_set);
+
+  menu.setScreen(settingsScreen);
 }
 
 void Menu_Scale2_Reset() {
